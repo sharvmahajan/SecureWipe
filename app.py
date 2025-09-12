@@ -310,17 +310,15 @@ def list_drives():
 
 
 def unmount_device(device):
-    """Unmount the device if it is mounted."""
+    """Check if device is mounted and unmount if necessary."""
     try:
-        print(f"Checking if {device} is mounted...")
-        
-        # Check if device is mounted using findmnt
+        # Check if device is mounted
         result = subprocess.run(['findmnt', '-n', device], capture_output=True, text=True)
         
         if result.returncode == 0:
             print(f"Device {device} is mounted. Attempting to unmount...")
             
-            # Try to unmount the device
+            # Try unmount
             unmount_result = subprocess.run(['umount', device], capture_output=True, text=True)
             
             if unmount_result.returncode == 0:
@@ -329,23 +327,24 @@ def unmount_device(device):
             else:
                 print(f"Failed to unmount {device}: {unmount_result.stderr}")
                 
-                # Try force unmount as last resort
-                print(f"Attempting force unmount of {device}...")
-                force_result = subprocess.run(['umount', '-f', device], capture_output=True, text=True)
+                # Try lazy unmount
+                print(f"Attempting lazy unmount of {device}...")
+                lazy_result = subprocess.run(['umount', '-l', device], capture_output=True, text=True)
                 
-                if force_result.returncode == 0:
-                    print(f"Device {device} force unmounted successfully.")
+                if lazy_result.returncode == 0:
+                    print(f"Device {device} lazy unmounted successfully.")
                     return True
                 else:
-                    print(f"Force unmount also failed: {force_result.stderr}")
+                    print(f"Lazy unmount also failed: {lazy_result.stderr}")
                     return False
         else:
             print(f"Device {device} is not mounted.")
             return True
             
     except Exception as e:
-        print(f"Error during unmount check/operation for {device}: {e}")
+        print(f"Error while checking/unmounting {device}: {e}")
         return False
+
 
 
 # Main secure_delete interface
