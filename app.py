@@ -117,9 +117,70 @@ class NISTSanitizer:
         return True
 
     def verify_sanitization(self):
-        self.log('INFO', 'Verifying sanitization...')
-        self.audit_data['verification_results'] = {'luks_decryption': 'PASSED', 'filesystem_access': 'PASSED'}
-        return True
+        """Verify LUKS sanitization by checking all keyslots are disabled"""
+        self.log('INFO', 'Starting sanitization verification...')
+        
+        try:
+            # Run luksDump to get keyslot status
+            result = subprocess.run(['cryptsetup', 'luksDump', self.device], 
+                                capture_output=True, text=True, check=True)
+            
+            # Parse keyslot lines
+            keyslot_lines = [line.strip() for line in result.stdout.split('\n') if 'Key Slot' in line]
+            total_keyslots = len(keyslot_lines)
+            disabled_count = 0
+            
+            self.log('INFO', f'LUKS Keyslot status for device: {self.device}')
+            self.log('INFO', '-' * 40)
+            
+            # Check each keyslot and log status
+            for line in keyslot_lines:
+                if 'DISABLED' in line:
+                    self.log('SUCCESS', f'✅ {line}')
+                    disabled_count += 1
+                else:
+                    self.log('ERROR', f'❌ {line}')
+            
+            self.log('INFO', '-' * 40)
+            self.log('INFO', f'Total keyslots: {total_keyslots}, Disabled: {disabled_count}')
+            
+            # Verification passes only if all keyslots are disabled
+            if total_keyslots == disabled_count and total_keyslots > 0:
+                self.log('SUCCESS', 'Sanitization verification PASSED ✅')
+                self.audit_data['verification_results'] = {
+                    'luks_keyslots_disabled': 'PASSED',
+                    'total_keyslots': total_keyslots,
+                    'disabled_keyslots': disabled_count,
+                    'verification_method': 'LUKS luksDump keyslot analysis'
+                }
+                return True
+            else:
+                self.log('ERROR', 'Sanitization verification FAILED ❌')
+                self.audit_data['verification_results'] = {
+                    'luks_keyslots_disabled': 'FAILED',
+                    'total_keyslots': total_keyslots,
+                    'disabled_keyslots': disabled_count,
+                    'verification_method': 'LUKS luksDump keyslot analysis'
+                }
+                return False
+                
+        except subprocess.CalledProcessError as e:
+            self.log('ERROR', f'cryptsetup luksDump failed: {e.stderr}')
+            self.audit_data['verification_results'] = {
+                'luks_keyslots_disabled': 'ERROR',
+                'error_message': str(e.stderr),
+                'verification_method': 'LUKS luksDump keyslot analysis'
+            }
+            return False
+        except Exception as e:
+            self.log('ERROR', f'Unexpected error during verification: {str(e)}')
+            self.audit_data['verification_results'] = {
+                'luks_keyslots_disabled': 'ERROR',
+                'error_message': str(e),
+                'verification_method': 'LUKS luksDump keyslot analysis'
+            }
+            return False
+
 
     def generate_documentation(self):
         self.log('INFO', 'Generating certificate data...')
