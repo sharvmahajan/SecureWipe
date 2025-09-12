@@ -11,27 +11,18 @@ import getpass
 import socket
 import webbrowser
 from pathlib import Path
-import io
-import hashlib
-import base64
 
 import requests
-from PIL import Image
-import qrcode
-
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from reportlab.lib.colors import HexColor, black, white
-from reportlab.lib.utils import ImageReader
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QFileDialog, QLineEdit, QLabel, QMessageBox, QComboBox,
     QFrame, QSizePolicy, QProgressBar, QSpacerItem, QStackedWidget,
-    QScrollArea, QGridLayout, QListWidget, QListWidgetItem
+    QScrollArea, QGridLayout, QListWidget, QListWidgetItem, QDialog
 )
 from PySide6.QtGui import QFont, QIcon, QPalette, QColor
 from PySide6.QtCore import Qt, QTimer
+
 
 class NISTSanitizer:
     def __init__(self, device, asset_tag="UNKNOWN", data_classification="INTERNAL"):
@@ -39,12 +30,6 @@ class NISTSanitizer:
         self.asset_tag = asset_tag
         self.data_classification = data_classification
         self.session_id = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
-        self.log_dir = Path('/var/log/sanitization')
-        self.cert_dir = Path('/var/log/sanitization/certificates')
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.cert_dir.mkdir(parents=True, exist_ok=True)
-        self.log_file = self.log_dir / f'sanitization_{self.session_id}.log'
-        self.cert_file = self.cert_dir / f'certificate_{self.session_id}.json'
         self.audit_data = {
             'session_id': self.session_id,
             'device': self.device,
@@ -61,9 +46,7 @@ class NISTSanitizer:
     def log(self, level, message):
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         log_entry = f"[{timestamp}] [{level}] {message}"
-        print(log_entry)
-        with open(self.log_file, 'a') as f:
-            f.write(log_entry + '\n')
+        print(log_entry)  # Still print to console for debugging
         self.audit_data['steps'].append({
             'timestamp': timestamp,
             'level': level,
@@ -139,7 +122,7 @@ class NISTSanitizer:
         return True
 
     def generate_documentation(self):
-        self.log('INFO', 'Generating JSON certificate...')
+        self.log('INFO', 'Generating certificate data...')
         certificate = {
             "certificate_id": f"CERT-{self.session_id}",
             "device": self.device,
@@ -158,11 +141,57 @@ class NISTSanitizer:
             "final_status": "SUCCESS",
             "disposition": "Device is CLEARED FOR UNRESTRICTED REUSE."
         }
-        with open(self.cert_file, 'w') as f:
-            json.dump(certificate, f, indent=2)
+        
         self.audit_data['final_status'] = 'SUCCESS'
+        self.audit_data['end_time'] = datetime.datetime.now().isoformat()
+        
+        # Store certificate data in memory for server transmission
+        self.certificate_data = certificate
 
-    def run_full_sanitization(self):
+    def send_to_server(self, api_base, jwt_token):
+        """Send both audit logs and certificate data to server"""
+        self.log('INFO', 'Sending sanitization data to server...')
+        
+        try:
+            # Prepare payload with both audit logs and certificate
+            payload = {
+                "audit_log": self.audit_data,
+                "certificate": self.certificate_data,
+                "session_id": self.session_id,
+                "submission_timestamp": datetime.datetime.now().isoformat()
+            }
+            
+            headers = {
+                "Authorization": f"Bearer {jwt_token}",
+                "Content-Type": "application/json"
+            }
+            
+            # Send to server
+            response = requests.post(
+                f"{api_base}/api/submit-sanitization-data",
+                json=payload,
+                headers=headers,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                self.log('SUCCESS', f'Sanitization data sent to server successfully')
+                return True, response.json()
+            else:
+                self.log('ERROR', f'Server responded with {response.status_code}: {response.text}')
+                return False, f"Server error: {response.status_code}"
+                
+        except requests.exceptions.Timeout:
+            self.log('ERROR', 'Request to server timed out')
+            return False, "Request timeout"
+        except requests.exceptions.ConnectionError:
+            self.log('ERROR', 'Failed to connect to server')
+            return False, "Connection error"
+        except Exception as e:
+            self.log('ERROR', f'Failed to send data to server: {str(e)}')
+            return False, str(e)
+
+    def run_full_sanitization(self, api_base=None, jwt_token=None):
         self.gather_device_info()
         if not self.pre_sanitization_checks():
             return False
@@ -171,58 +200,105 @@ class NISTSanitizer:
         if not self.verify_sanitization():
             return False
         self.generate_documentation()
+        
+        # Send to server if credentials provided
+        server_success = True
+        server_message = "No server configured"
+        
+        if api_base and jwt_token:
+            server_success, server_message = self.send_to_server(api_base, jwt_token)
+        
         self.log('SUCCESS', 'Sanitization completed successfully.')
-        return True
+        return True, server_success, server_message
 
-    # PDF generation (ReportLab)
-    def generate_certificate_pdf(self, json_file_path):
-        with open(json_file_path) as f:
-            data = json.load(f)
 
-        buffer = io.BytesIO()
-        c = canvas.Canvas(buffer, pagesize=A4)
-        width, height = A4
-        margin = 40
+def list_drives():
+    """Return all block devices with details"""
+    try:
+        result = subprocess.run(
+            ["lsblk", "-J", "-o", "NAME,SIZE,MODEL,SERIAL,TYPE,MOUNTPOINT"],
+            capture_output=True, text=True, check=True
+        )
+        data = json.loads(result.stdout)
+        devices = []
 
-        # Border
-        c.setStrokeColor(HexColor("#0f4c81"))
-        c.setLineWidth(2)
-        c.roundRect(20, 20, width-40, height-40, 15, stroke=1, fill=0)
+        for dev in data.get("blockdevices", []):
+            devices.append({
+                "name": f"/dev/{dev['name']}",
+                "size": dev.get("size", "UNKNOWN"),
+                "model": dev.get("model", "UNKNOWN"),
+                "serial": dev.get("serial", "UNKNOWN"),
+                "type": dev.get("type", "UNKNOWN"),
+                "mountpoint": dev.get("mountpoint", "")
+            })
 
-        # Title
-        c.setFont("Helvetica-Bold", 18)
-        c.drawCentredString(width/2, height-100, "DRIVE WIPING DIGITAL CERTIFICATE")
+            # Include partitions or child devices
+            for child in dev.get("children", []):
+                devices.append({
+                    "name": f"/dev/{child['name']}",
+                    "size": child.get("size", "UNKNOWN"),
+                    "model": child.get("model", dev.get("model", "UNKNOWN")),
+                    "serial": child.get("serial", dev.get("serial", "UNKNOWN")),
+                    "type": child.get("type", "UNKNOWN"),
+                    "mountpoint": child.get("mountpoint", "")
+                })
 
-        # Details
-        y = height - 140
-        for key, value in data.items():
-            c.setFont("Helvetica", 10)
-            c.drawString(margin, y, f"{key}: {value}")
-            y -= 15
+        return devices
+    except Exception as e:
+        return [{"error": str(e)}]
 
-        # QR code
-        qr_data = f"https://next-frontend-nu-two.vercel.app/verify"
-        qr_img = qrcode.make(qr_data)
-        qr_buffer = io.BytesIO()
-        qr_img.save(qr_buffer, format="PNG")
-        qr_reader = ImageReader(qr_buffer)
-        c.drawImage(qr_reader, width - 130, 50, width=90, height=90, mask='auto')
 
-        c.showPage()
-        c.save()
-        buffer.seek(0)
-        pdf_bytes = buffer.read()
-        pdf_path = Path(json_file_path).with_suffix(".pdf")
-        with open(pdf_path, 'wb') as f:
-            f.write(pdf_bytes)
-        self.log('SUCCESS', f'PDF certificate generated: {pdf_path}')
-        return pdf_path
+def unmount_device(device):
+    """Unmount the device if it is mounted."""
+    try:
+        print(f"Checking if {device} is mounted...")
+        
+        # Check if device is mounted using findmnt
+        result = subprocess.run(['findmnt', '-n', device], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            print(f"Device {device} is mounted. Attempting to unmount...")
+            
+            # Try to unmount the device
+            unmount_result = subprocess.run(['umount', device], capture_output=True, text=True)
+            
+            if unmount_result.returncode == 0:
+                print(f"Device {device} unmounted successfully.")
+                return True
+            else:
+                print(f"Failed to unmount {device}: {unmount_result.stderr}")
+                
+                # Try force unmount as last resort
+                print(f"Attempting force unmount of {device}...")
+                force_result = subprocess.run(['umount', '-f', device], capture_output=True, text=True)
+                
+                if force_result.returncode == 0:
+                    print(f"Device {device} force unmounted successfully.")
+                    return True
+                else:
+                    print(f"Force unmount also failed: {force_result.stderr}")
+                    return False
+        else:
+            print(f"Device {device} is not mounted.")
+            return True
+            
+    except Exception as e:
+        print(f"Error during unmount check/operation for {device}: {e}")
+        return False
+
 
 # Main secure_delete interface
-def secure_delete(path):
+def secure_delete(path, api_base=None, jwt_token=None):
     if platform.system().lower() != "linux":
         print("Secure delete only supported on Linux")
         return False
+
+    # If path is a device, check if it's mounted and unmount if necessary
+    if path.startswith("/dev/"):
+        print(f"Device path detected: {path}")
+        if not unmount_device(path):
+            print(f"Cannot proceed with wiping. Failed to unmount {path}.")
+            return False
 
     if os.path.isfile(path):
         print(f"File detected: {path}. Overwriting before deletion...")
@@ -238,15 +314,20 @@ def secure_delete(path):
     elif os.path.exists(path):
         print(f"Device detected: {path}. Running NISTSanitizer...")
         sanitizer = NISTSanitizer(path)
-        if sanitizer.run_full_sanitization():
-            sanitizer.generate_certificate_pdf(sanitizer.cert_file)
-            return True
+        result = sanitizer.run_full_sanitization(api_base, jwt_token)
+        
+        if isinstance(result, tuple):
+            sanitization_success, server_success, server_message = result
+            if sanitization_success:
+                return True, server_success, server_message
+            else:
+                return False, False, "Sanitization failed"
         else:
-            return False
+            # Backward compatibility
+            return result if result else False
     else:
         print(f"Path {path} does not exist.")
         return False
-
 
 
 API_BASE = "http://localhost:5000"
@@ -255,15 +336,15 @@ jwt_token = None
 
 class StatusDot(QLabel):
     """Small colored dot used for status indicators."""
-    def _init_(self, color="#d0d0d0", parent=None):
-        super()._init_(parent)
+    def __init__(self, color="#d0d0d0", parent=None):
+        super().__init__(parent)
         self.setFixedSize(12, 12)
         self.setStyleSheet(f"border-radius:6px; background:{color};")
 
 
 class WipeApp(QWidget):
-    def _init_(self):
-        super()._init_()
+    def __init__(self):
+        super().__init__()
         self.setWindowTitle("SecureWipe — Desktop")
         self.resize(1000, 680)
 
@@ -315,8 +396,6 @@ class WipeApp(QWidget):
         header.addLayout(status_box)
 
         root.addLayout(header)
-
-        # NOTE: removed the top 'sign-in' dashboard bar as requested. The UI now starts directly with pages.
 
         # Stacked pages
         self.stack = QStackedWidget()
@@ -414,7 +493,7 @@ class WipeApp(QWidget):
 
         # actions row
         actions = QHBoxLayout()
-        self.select_btn = QPushButton("Select file/folder & wipe")
+        self.select_btn = QPushButton("Select drive & wipe")
         self.select_btn.setEnabled(False)
         self.select_btn.setCursor(Qt.PointingHandCursor)
         self.select_btn.setObjectName("successBtn")
@@ -523,6 +602,11 @@ class WipeApp(QWidget):
             QScrollArea { border: none; }
             QProgressBar { background: #334155; border-radius: 8px; height: 14px; }
             QProgressBar::chunk { border-radius: 8px; background-color: #0ea5e9; }
+            QListWidget { background: #0f172a; border: 1px solid #334155; border-radius: 8px; }
+            QListWidget::item { padding: 8px; border-bottom: 1px solid #334155; }
+            QListWidget::item:selected { background: #1e40af; }
+            QListWidget::item:hover { background: #1e3a8a; }
+            QDialog { background: #0f172a; }
         """)
         p = self.palette()
         p.setColor(QPalette.Window, QColor("#0f172a"))
@@ -572,10 +656,105 @@ class WipeApp(QWidget):
             QMessageBox.warning(self, "Not signed in", "Please sign in before starting a wipe.")
             return
 
-        path = QFileDialog.getExistingDirectory(self, "Select Folder to Wipe")
-        if not path:
+        # Get available drives
+        drives = list_drives()
+        
+        if not drives or (len(drives) == 1 and 'error' in drives[0]):
+            QMessageBox.critical(self, "Error", "Cannot retrieve drive list. Make sure you have proper permissions.")
             return
 
+        # Create drive selection dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select Drive to Wipe")
+        dialog.setModal(True)
+        dialog.resize(700, 500)
+
+        layout = QVBoxLayout()
+
+        # Warning message
+        warning = QLabel("⚠️ WARNING: This will permanently destroy all data on the selected drive!")
+        warning.setStyleSheet("color: #ff6b6b; font-weight: bold; padding: 10px; background: #2d1b1b; border-radius: 8px; border: 1px solid #ff6b6b;")
+        layout.addWidget(warning)
+
+        # Drive list
+        drive_list = QListWidget()
+        selected_path = None
+        
+        for drive in drives:
+            if 'error' in drive:
+                continue
+                
+            # Skip mounted system drives for safety
+            if drive.get('mountpoint') in ['/', '/boot', '/home', '/usr', '/var']:
+                continue
+                
+            item_text = f"{drive['name']} - {drive['size']} - {drive['model']} ({drive['type']})"
+            if drive.get('mountpoint'):
+                item_text += f" [MOUNTED: {drive['mountpoint']}]"
+                
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.UserRole, drive['name'])
+            drive_list.addItem(item)
+
+        layout.addWidget(QLabel("Available drives:"))
+        layout.addWidget(drive_list)
+
+        # Option to select file/folder instead
+        file_folder_btn = QPushButton("Select File/Folder Instead")
+        file_folder_btn.setObjectName("primaryBtn")
+        file_folder_btn.setFixedHeight(36)
+        layout.addWidget(file_folder_btn)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        wipe_btn = QPushButton("Wipe Selected")
+        wipe_btn.setStyleSheet("background-color: #ff6b6b; color: white; font-weight: 700; border-radius: 8px;")
+        wipe_btn.setFixedHeight(40)
+        cancel_btn.setFixedHeight(40)
+
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(wipe_btn)
+        layout.addLayout(button_layout)
+
+        dialog.setLayout(layout)
+
+        cancel_btn.clicked.connect(dialog.reject)
+
+        def on_file_folder_select():
+            dialog.accept()
+            path = QFileDialog.getExistingDirectory(self, "Select Folder to Wipe")
+            if path:
+                self.perform_wipe(path)
+
+        def on_wipe():
+            current_item = drive_list.currentItem()
+            if not current_item:
+                QMessageBox.warning(dialog, "No Selection", "Please select a drive to wipe.")
+                return
+                
+            drive_path = current_item.data(Qt.UserRole)
+            
+            # Final confirmation
+            reply = QMessageBox.question(
+                dialog, 
+                "Final Confirmation",
+                f"Are you absolutely sure you want to wipe {drive_path}?\n\nThis action cannot be undone!",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                dialog.accept()
+                self.perform_wipe(drive_path)
+
+        file_folder_btn.clicked.connect(on_file_folder_select)
+        wipe_btn.clicked.connect(on_wipe)
+
+        dialog.exec()
+
+    def perform_wipe(self, path):
+        """Perform the actual wiping process"""
         method = self.method_box.currentText()
         policy = self.policy_box.currentText()
 
@@ -586,14 +765,27 @@ class WipeApp(QWidget):
 
         wipe_start_time = int(__import__("time").time())
         result = "failed"
+        server_success = False
+        server_message = "Not attempted"
 
         # start progress animation
         self.progress.setValue(5)
         self._progress_timer.start()
 
         try:
-            if secure_delete(path):
-                result = "passed"
+            # Call secure_delete with server credentials
+            wipe_result = secure_delete(path, API_BASE, jwt_token)
+            
+            if isinstance(wipe_result, tuple):
+                # Device wiping with server transmission
+                sanitization_success, server_success, server_message = wipe_result
+                if sanitization_success:
+                    result = "passed"
+            else:
+                # File/folder wiping (boolean result)
+                if wipe_result:
+                    result = "passed"
+                    
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Wipe failed: {str(e)}")
             result = "failed"
@@ -604,35 +796,19 @@ class WipeApp(QWidget):
         self._progress_timer.stop()
         self.progress.setValue(100)
 
-        payload = {
-            "device": {
-                "id": socket.gethostname(),
-                "model": platform.machine(),
-                "firmware": platform.version(),
-                "capacity_gb": capacity_gb
-            },
-            "dev_path": path,
-            "method": method,
-            "policy": policy,
-            "user_id": "",
-            "username": "",
-            "wipe_start_time": wipe_start_time,
-            "wipe_end_time": wipe_end_time,
-            "result": result
-        }
-
-        try:
-            res = requests.post(
-                f"{API_BASE}/api/wipe-data",
-                json=payload,
-                headers={"Authorization": f"Bearer {jwt_token}"}
-            )
-            if res.status_code == 200:
-                QMessageBox.information(self, "Success", f"Wipe {result} + metadata sent")
+        # Display results based on wipe status and server communication
+        if result == "passed":
+            if server_success:
+                QMessageBox.information(self, "Success", 
+                    f"Wipe completed successfully\n"
+                    f"• Audit logs and certificate sent to server")
             else:
-                QMessageBox.warning(self, "Server Error", f"Failed: {res.status_code}\n{res.text}")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+                QMessageBox.information(self, "Partial Success", 
+                    f"Wipe completed successfully\n"
+                    f"• Server communication failed: {server_message}")
+        else:
+            QMessageBox.critical(self, "Wipe Failed", 
+                "The wiping process failed. Check logs for details.")
 
         # reset progress slowly
         QTimer.singleShot(600, lambda: self.progress.setValue(0))
