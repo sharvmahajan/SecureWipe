@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QSplitter, QGroupBox, QFormLayout, QCheckBox, QSpinBox,
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QStatusBar
 )
-from PySide6.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QAction
+from PySide6.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QAction, QTextCursor
 from PySide6.QtCore import Qt, QTimer, QThread, QObject, Signal, QSize, QPropertyAnimation, QEasingCurve
 
 from business_logic import APIClient, list_drives, secure_delete
@@ -162,14 +162,521 @@ class SecureWipeApp(QWidget):
         self.progress_timer.timeout.connect(self._advance_progress)
         self.progress_timer.setInterval(50)
         
+        # Apply default theme before initializing UI
+        self.apply_theme("dark")
+        
         # Initialize UI
         self._init_ui()
-        self._apply_enterprise_theme()
         self._setup_keyboard_shortcuts()
         
         # Start on login page
         self.switch_page(0)
         self._update_status("Application initialized", "info")
+        
+    def apply_theme(self, mode: str):
+        """Apply the selected theme."""
+        if mode not in ["dark", "light"]:
+            mode = "dark"
+        
+        self.current_theme = mode
+        
+        if mode == "dark":
+            colors = {
+                'bg': '#111827',
+                'text': '#F9FAFB',
+                'base': '#1F2937',
+                'alt_base': '#111827',
+                'border': '#374151',
+                'input_bg': '#374151',
+                'input_border': '#4B5563',
+                'hover': '#374151',
+                'pressed': '#3B82F6',
+                'nav_text': '#D1D5DB',
+                'nav_hover': '#374151',
+                'nav_pressed': '#3B82F6',
+                'primary_start': '#3B82F6',
+                'primary_end': '#2563EB',
+                'primary_hover_start': '#2563EB',
+                'primary_hover_end': '#1D4ED8',
+                'primary_pressed': '#1D4ED8',
+                'secondary_text': '#3B82F6',
+                'secondary_border': '#3B82F6',
+                'secondary_hover_bg': '#3B82F6',
+                'secondary_hover_text': 'white',
+                'success_start': '#059669',
+                'success_end': '#047857',
+                'success_hover_start': '#047857',
+                'success_hover_end': '#065F46',
+                'danger_start': '#DC2626',
+                'danger_end': '#B91C1C',
+                'danger_hover_start': '#B91C1C',
+                'danger_hover_end': '#991B1B',
+                'disabled_bg': '#4B5563',
+                'disabled_text': '#9CA3AF',
+                'progress_bg': '#374151',
+                'progress_border': '#4B5563',
+                'progress_chunk_start': '#3B82F6',
+                'progress_chunk_end': '#8B5CF6',
+                'log_bg': '#111827',
+                'log_border': '#374151',
+                'log_text': '#E5E7EB',
+                'table_bg': '#1F2937',
+                'table_alt': '#111827',
+                'header_bg': '#374151',
+                'group_title': '#3B82F6',
+                'scroll_bg': '#1F2937',
+                'scroll_handle': '#4B5563',
+                'scroll_hover': '#6B7280',
+                'warning_bg': '#FEF3C7',
+                'warning_border': '#F59E0B',
+                'warning_text': '#92400E'
+            }
+        else:  # light
+            colors = {
+                'bg': '#FFFFFF',
+                'text': '#111827',
+                'base': '#F3F4F6',
+                'alt_base': '#FFFFFF',
+                'border': '#D1D5DB',
+                'input_bg': '#FFFFFF',
+                'input_border': '#D1D5DB',
+                'hover': '#F3F4F6',
+                'pressed': '#3B82F6',
+                'nav_text': '#4B5563',
+                'nav_hover': '#E5E7EB',
+                'nav_pressed': '#3B82F6',
+                'primary_start': '#3B82F6',
+                'primary_end': '#2563EB',
+                'primary_hover_start': '#2563EB',
+                'primary_hover_end': '#1D4ED8',
+                'primary_pressed': '#1D4ED8',
+                'secondary_text': '#3B82F6',
+                'secondary_border': '#3B82F6',
+                'secondary_hover_bg': '#3B82F6',
+                'secondary_hover_text': 'white',
+                'success_start': '#059669',
+                'success_end': '#047857',
+                'success_hover_start': '#047857',
+                'success_hover_end': '#065F46',
+                'danger_start': '#DC2626',
+                'danger_end': '#B91C1C',
+                'danger_hover_start': '#B91C1C',
+                'danger_hover_end': '#991B1B',
+                'disabled_bg': '#E5E7EB',
+                'disabled_text': '#6B7280',
+                'progress_bg': '#E5E7EB',
+                'progress_border': '#D1D5DB',
+                'progress_chunk_start': '#3B82F6',
+                'progress_chunk_end': '#8B5CF6',
+                'log_bg': '#FFFFFF',
+                'log_border': '#D1D5DB',
+                'log_text': '#4B5563',
+                'table_bg': '#FFFFFF',
+                'table_alt': '#F9FAFB',
+                'header_bg': '#E5E7EB',
+                'group_title': '#3B82F6',
+                'scroll_bg': '#F3F4F6',
+                'scroll_handle': '#D1D5DB',
+                'scroll_hover': '#9CA3AF',
+                'warning_bg': '#FFFBEB',
+                'warning_border': '#D97706',
+                'warning_text': '#92400E'
+            }
+        
+        self.colors = colors
+        
+        stylesheet = f"""
+            /* Main Application */
+            QWidget {{
+                background-color: {colors['bg']};
+                color: {colors['text']};
+                font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+            }}
+            /* Labels */
+            QLabel {{
+                background-color: transparent;
+                color: {colors['text']};
+            }}
+            /* Checkboxes */
+            QCheckBox {{
+                background-color: transparent;
+                color: {colors['text']};
+                spacing: 6px; /* nice gap between box and label text */
+            }}
+            /* Subdued text */
+            QLabel[subdued="true"],
+            QCheckBox[subdued="true"] {{
+                color: {colors['disabled_text']};
+            }}
+            
+            /* Header */
+            QFrame#header {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {colors['base']}, stop:1 {colors['bg']});
+                border-bottom: 1px solid {colors['border']};
+            }}
+            
+            /* Sidebar */
+            QFrame#sidebar {{
+                background-color: {colors['base']};
+                border-right: 1px solid {colors['border']};
+            }}
+            
+            /* Navigation Buttons */
+            QPushButton#navButton {{
+                background: transparent;
+                color: {colors['nav_text']};
+                border: none;
+                border-radius: 8px;
+                padding: 12px 16px;
+                text-align: left;
+                font-weight: 500;
+                font-size: 13px;
+            }}
+            
+            QPushButton#navButton:hover {{
+                background-color: {colors['nav_hover']};
+                color: {colors['text']};
+            }}
+            
+            QPushButton#navButton:pressed,
+            QPushButton#navButton[active="true"] {{
+                background-color: {colors['nav_pressed']};
+                color: white;
+            }}
+            
+            /* Form Inputs */
+            QLineEdit#formInput, QLineEdit#searchInput {{
+                background-color: {colors['input_bg']};
+                border: 1px solid {colors['input_border']};
+                border-radius: 6px;
+                padding: 8px 12px;
+                color: {colors['text']};
+                font-size: 14px;
+            }}
+            
+            QLineEdit#formInput:focus, QLineEdit#searchInput:focus {{
+                border-color: {colors['primary_start']};
+                outline: none;
+            }}
+            
+            QComboBox#formCombo {{
+                background-color: {colors['input_bg']};
+                border: 1px solid {colors['input_border']};
+                border-radius: 6px;
+                padding: 8px 12px;
+                color: {colors['text']};
+            }}
+            
+            QComboBox#formCombo::drop-down {{
+                border: none;
+                width: 20px;
+            }}
+            
+            QComboBox#formCombo::down-arrow {{
+                image: none;
+                border: none;
+            }}
+            
+            /* Buttons */
+            QPushButton#actionButton {{
+                background-color: #0078d4;
+                color: white;
+                border: 1px solid #0078d4;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 12px;
+            }}
+
+            QPushButton#actionButton:hover {{
+                background-color: #106ebe;
+                border-color: #106ebe;
+            }}
+
+            QPushButton#actionButton:pressed {{
+                background-color: #005a9e;
+                border-color: #005a9e;
+            }}
+
+            QPushButton#primaryButton {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {colors['primary_start']}, stop:1 {colors['primary_end']});
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 14px;
+                padding: 12px 24px;
+            }}
+            
+            QPushButton#primaryButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {colors['primary_hover_start']}, stop:1 {colors['primary_hover_end']});
+            }}
+            
+            QPushButton#primaryButton:pressed {{
+                background: {colors['primary_pressed']};
+            }}
+            
+            QPushButton#primaryButton:disabled {{
+                background: {colors['disabled_bg']};
+                color: {colors['disabled_text']};
+            }}
+            
+            QPushButton#secondaryButton {{
+                background: transparent;
+                color: {colors['secondary_text']};
+                border: 1px solid {colors['secondary_border']};
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 14px;
+                padding: 10px 20px;
+            }}
+            
+            QPushButton#secondaryButton:hover {{
+                background: {colors['secondary_hover_bg']};
+                color: {colors['secondary_hover_text']};
+            }}
+            
+            QPushButton#successButton {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {colors['success_start']}, stop:1 {colors['success_end']});
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 14px;
+                padding: 12px 24px;
+            }}
+            
+            QPushButton#successButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {colors['success_hover_start']}, stop:1 {colors['success_hover_end']});
+            }}
+            
+            QPushButton#successButton:disabled {{
+                background: {colors['disabled_bg']};
+                color: {colors['disabled_text']};
+            }}
+            
+            QPushButton#dangerButton {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {colors['danger_start']}, stop:1 {colors['danger_end']});
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 14px;
+                padding: 12px 24px;
+            }}
+            
+            QPushButton#dangerButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {colors['danger_hover_start']}, stop:1 {colors['danger_hover_end']});
+            }}
+            
+            QPushButton#dangerButton:disabled {{
+                background: {colors['disabled_bg']};
+                color: {colors['disabled_text']};
+            }}
+            
+            /* Cards */
+            QFrame#loginCard, QFrame#verificationCard, QFrame#configPanel, QFrame#progressPanel {{
+                background-color: {colors['base']};
+                border: 1px solid {colors['border']};
+                border-radius: 12px;
+            }}
+            
+            /* Progress Bar */
+            QProgressBar#progressBar {{
+                background-color: {colors['progress_bg']};
+                border: 1px solid {colors['progress_border']};
+                border-radius: 12px;
+                text-align: center;
+                color: {colors['text']};
+                font-weight: 600;
+            }}
+            
+            QProgressBar#progressBar::chunk {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {colors['progress_chunk_start']}, stop:1 {colors['progress_chunk_end']});
+                border-radius: 11px;
+            }}
+            
+            /* Text Edit */
+            QTextEdit#activityLog {{
+                background-color: {colors['log_bg']};
+                border: 1px solid {colors['log_border']};
+                border-radius: 8px;
+                color: {colors['log_text']};
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 11px;
+                padding: 8px;
+            }}
+            
+            /* Table */
+            QTableWidget#certificatesTable {{
+                background-color: {colors['table_bg']};
+                border: 1px solid {colors['border']};
+                border-radius: 8px;
+                gridline-color: {colors['border']};
+                color: {colors['text']};
+            }}
+            
+            QTableWidget#certificatesTable::item {{
+                padding: 8px;
+                border-bottom: 1px solid {colors['border']};
+            }}
+            
+            QTableWidget#certificatesTable::item:selected {{
+                background-color: {colors['primary_start']};
+                color: white;
+            }}
+            
+            QTableWidget#certificatesTable::item:alternate {{
+                background-color: {colors['table_alt']};
+            }}
+            
+            QHeaderView::section {{
+                background-color: {colors['header_bg']};
+                color: {colors['text']};
+                padding: 8px;
+                border: none;
+                border-right: 1px solid {colors['input_border']};
+                font-weight: 600;
+            }}
+            
+            /* Group Boxes */
+            QGroupBox {{
+                color: {colors['text']};
+                border: 1px solid {colors['border']};
+                border-radius: 8px;
+                margin-top: 8px;
+                font-weight: 600;
+            }}
+            
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 8px 0 8px;
+                color: {colors['group_title']};
+            }}
+            
+            QGroupBox#systemInfo {{
+                background-color: {colors['base']};
+            }}
+            
+            /* Tabs */
+            QTabWidget#settingsTabs::pane {{
+                border: 1px solid {colors['border']};
+                border-radius: 8px;
+                background-color: {colors['base']};
+            }}
+            
+            QTabWidget#settingsTabs::tab-bar {{
+                alignment: left;
+            }}
+            
+            QTabBar::tab {{
+                background-color: {colors['progress_bg']};
+                color: {colors['disabled_text']};
+                padding: 8px 16px;
+                margin-right: 2px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }}
+            
+            QTabBar::tab:selected {{
+                background-color: {colors['primary_start']};
+                color: white;
+            }}
+            
+            QTabBar::tab:hover {{
+                background-color: {colors['input_border']};
+                color: {colors['text']};
+            }}
+            
+            /* Checkboxes */
+            QCheckBox {{
+                color: {colors['text']};
+                spacing: 8px;
+            }}
+            
+            QCheckBox::indicator {{
+                width: 16px;
+                height: 16px;
+                border: 2px solid {colors['input_border']};
+                border-radius: 3px;
+                background-color: {colors['input_bg']};
+            }}
+            
+            QCheckBox::indicator:checked {{
+                background-color: {colors['primary_start']};
+                border-color: {colors['primary_start']};
+            }}
+            
+            /* Spin boxes */
+            QSpinBox {{
+                background-color: {colors['input_bg']};
+                border: 1px solid {colors['input_border']};
+                border-radius: 4px;
+                padding: 4px 8px;
+                color: {colors['text']};
+            }}
+            
+            /* Scroll bars */
+            QScrollBar:vertical {{
+                background-color: {colors['scroll_bg']};
+                width: 12px;
+                border-radius: 6px;
+            }}
+            
+            QScrollBar::handle:vertical {{
+                background-color: {colors['scroll_handle']};
+                border-radius: 6px;
+                min-height: 20px;
+            }}
+            
+            QScrollBar::handle:vertical:hover {{
+                background-color: {colors['scroll_hover']};
+            }}
+        """
+        
+        palette = QPalette()
+        palette.setColor(QPalette.Window, QColor(colors['bg']))
+        palette.setColor(QPalette.WindowText, QColor(colors['text']))
+        palette.setColor(QPalette.Base, QColor(colors['base']))
+        palette.setColor(QPalette.AlternateBase, QColor(colors['alt_base']))
+        palette.setColor(QPalette.Text, QColor(colors['text']))
+        palette.setColor(QPalette.ButtonText, QColor(colors['text']))
+        palette.setColor(QPalette.Button, QColor(colors['base']))
+        palette.setColor(QPalette.Highlight, QColor(colors['primary_start']))
+        palette.setColor(QPalette.HighlightedText, QColor('white'))
+        
+        app = QApplication.instance()
+        app.setPalette(palette)
+        app.setStyleSheet(stylesheet)
+        
+    def _change_theme(self, text: str):
+        """Handle theme change from settings."""
+        if text == "Dark Theme":
+            self.apply_theme("dark")
+        elif text == "Light Theme":
+            self.apply_theme("light")
+        elif text == "System Default":
+            # Detect system theme (simplified, default to dark if detection fails)
+            mode = "dark"
+            try:
+                if sys.platform == "win32":
+                    import winreg
+                    reg = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+                    key = winreg.OpenKey(reg, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+                    value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+                    mode = "light" if value == 1 else "dark"
+            except:
+                pass
+            self.apply_theme(mode)
         
     def _init_ui(self):
         """Initialize the user interface."""
@@ -236,11 +743,10 @@ class SecureWipeApp(QWidget):
         
         app_title = QLabel("SecureWipe Enterprise")
         app_title.setFont(QFont("Segoe UI", 18, QFont.Bold))
-        app_title.setStyleSheet("color: #F9FAFB;")
         
         subtitle = QLabel("Professional Data Sanitization Platform")
         subtitle.setFont(QFont("Segoe UI", 10))
-        subtitle.setStyleSheet("color: #9CA3AF;")
+        subtitle.setProperty("subdued", True)
         
         title_layout.addWidget(app_title)
         title_layout.addWidget(subtitle)
@@ -258,7 +764,7 @@ class SecureWipeApp(QWidget):
         
         self.user_status_label = QLabel("Not Connected")
         self.user_status_label.setFont(QFont("Segoe UI", 10, QFont.Medium))
-        self.user_status_label.setStyleSheet("color: #9CA3AF;")
+        self.user_status_label.setProperty("subdued", True)
         user_info.addWidget(self.user_status_label)
         
         # Loading spinner
@@ -266,11 +772,44 @@ class SecureWipeApp(QWidget):
         self.loading_spinner.hide()
         user_info.addWidget(self.loading_spinner)
         
+        # Logout button
+        self.logout_button = QPushButton("Logout")
+        self.logout_button.setObjectName("dangerButton")
+        self.logout_button.setFixedHeight(40)
+        self.logout_button.setCursor(Qt.PointingHandCursor)
+        self.logout_button.clicked.connect(self.logout_user)
+        self.logout_button.setEnabled(False)
+        user_info.addWidget(self.logout_button)
+        
         layout.addLayout(user_info)
         header.setLayout(layout)
         
         return header
+    
+
+    def logout_user(self):
+        """Handle user logout."""
+        if not self.is_authenticated:
+            return
+            
+        reply = QMessageBox.question(
+            self,
+            "Confirm Logout",
+            "Are you sure you want to log out?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
         
+        if reply == QMessageBox.Yes:
+            self.is_authenticated = False
+            self.status_indicator.set_status("offline")
+            self.user_status_label.setText("Not Connected")
+            self.select_target_button.setEnabled(False)
+            self.logout_button.setEnabled(False)
+            self.nav_buttons[1].setEnabled(False)  # Disable Wipe Operations
+            self.nav_buttons[2].setEnabled(False)  # Disable Certificates
+            self.switch_page(0)  # Return to login page
+            self._update_status("Logged out successfully", "info")
     def _create_sidebar(self) -> QWidget:
         """Create the navigation sidebar."""
         sidebar = QFrame()
@@ -303,6 +842,11 @@ class SecureWipeApp(QWidget):
         layout.addWidget(sys_info)
         
         sidebar.setLayout(layout)
+        if not self.is_authenticated:
+            self.nav_buttons[1].setEnabled(False)  # Disable Wipe Operations
+            self.nav_buttons[2].setEnabled(False)  # Disable Certificates
+            self.nav_buttons[3].setEnabled(True)  # Enable Verification
+            self.nav_buttons[4].setEnabled(True)  # Enable Settings
         return sidebar
         
     def _create_nav_button(self, name: str, icon: str, page_idx: int, tooltip: str) -> QPushButton:
@@ -333,10 +877,11 @@ class SecureWipeApp(QWidget):
         
         for label, value in system_info:
             label_widget = QLabel(label)
-            label_widget.setStyleSheet("font-weight: 600; color: #9CA3AF;")
+            label_widget.setStyleSheet("font-weight: 600;")
+            label_widget.setProperty("subdued", True)
             
             value_widget = QLabel(value)
-            value_widget.setStyleSheet("color: #F9FAFB; font-family: 'Consolas', monospace;")
+            value_widget.setStyleSheet("font-family: 'Consolas', monospace;")
             value_widget.setWordWrap(True)
             
             layout.addRow(label_widget, value_widget)
@@ -368,12 +913,11 @@ class SecureWipeApp(QWidget):
         title = QLabel("Secure Authentication")
         title.setFont(QFont("Segoe UI", 20, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: #F9FAFB;")
         
         subtitle = QLabel("Access your SecureWipe Enterprise account")
         subtitle.setFont(QFont("Segoe UI", 12))
         subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet("color: #9CA3AF;")
+        subtitle.setProperty("subdued", True)
         
         header_layout.addWidget(title)
         header_layout.addWidget(subtitle)
@@ -388,7 +932,7 @@ class SecureWipeApp(QWidget):
         email_layout.setSpacing(6)
         
         email_label = QLabel("Email Address")
-        email_label.setStyleSheet("font-weight: 600; color: #F9FAFB;")
+        email_label.setStyleSheet("font-weight: 600;")
         
         self.email_input = QLineEdit()
         self.email_input.setPlaceholderText("user@company.com")
@@ -403,7 +947,7 @@ class SecureWipeApp(QWidget):
         password_layout.setSpacing(6)
         
         password_label = QLabel("Password")
-        password_label.setStyleSheet("font-weight: 600; color: #F9FAFB;")
+        password_label.setStyleSheet("font-weight: 600;")
         
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Enter your password")
@@ -420,7 +964,7 @@ class SecureWipeApp(QWidget):
         
         # Remember me checkbox
         self.remember_checkbox = QCheckBox("Keep me signed in")
-        self.remember_checkbox.setStyleSheet("color: #9CA3AF;")
+        self.remember_checkbox.setProperty("subdued", True)
         form_layout.addWidget(self.remember_checkbox)
         
         card_layout.addLayout(form_layout)
@@ -437,8 +981,8 @@ class SecureWipeApp(QWidget):
         options_layout = QHBoxLayout()
         options_layout.setAlignment(Qt.AlignCenter)
         
-        help_link = QLabel('<a href="#" style="color: #3B82F6;">Need help?</a>')
-        help_link.setOpenExternalLinks(False)
+        help_link = QLabel('<a href="https://next-frontend-nu-two.vercel.app/" style="color: #3B82F6;">Need help?</a>')
+        help_link.setOpenExternalLinks(True)
         options_layout.addWidget(help_link)
         
         card_layout.addLayout(options_layout)
@@ -469,7 +1013,7 @@ class SecureWipeApp(QWidget):
         # Panel title
         title = QLabel("Wipe Configuration")
         title.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        title.setStyleSheet("color: #F9FAFB; margin-bottom: 8px;")
+        title.setStyleSheet("margin-bottom: 8px;")
         config_layout.addWidget(title)
         
         # Configuration form
@@ -478,7 +1022,7 @@ class SecureWipeApp(QWidget):
         
         # Wipe method
         method_label = QLabel("Sanitization Method:")
-        method_label.setStyleSheet("font-weight: 600; color: #F9FAFB;")
+        method_label.setStyleSheet("font-weight: 600;")
         
         self.method_combo = QComboBox()
         self.method_combo.setFixedHeight(40)
@@ -493,7 +1037,7 @@ class SecureWipeApp(QWidget):
         
         # Security level
         security_label = QLabel("Security Level:")
-        security_label.setStyleSheet("font-weight: 600; color: #F9FAFB;")
+        security_label.setStyleSheet("font-weight: 600;")
         
         self.security_combo = QComboBox()
         self.security_combo.setFixedHeight(40)
@@ -507,11 +1051,10 @@ class SecureWipeApp(QWidget):
         
         # Verification
         verify_label = QLabel("Verification:")
-        verify_label.setStyleSheet("font-weight: 600; color: #F9FAFB;")
+        verify_label.setStyleSheet("font-weight: 600;")
         
         self.verification_check = QCheckBox("Enable post-wipe verification")
         self.verification_check.setChecked(True)
-        self.verification_check.setStyleSheet("color: #F9FAFB;")
         
         form.addRow(method_label, self.method_combo)
         form.addRow(security_label, self.security_combo)
@@ -556,7 +1099,7 @@ class SecureWipeApp(QWidget):
         # Progress section
         progress_title = QLabel("Operation Progress")
         progress_title.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        progress_title.setStyleSheet("color: #F9FAFB; margin-bottom: 8px;")
+        progress_title.setStyleSheet("margin-bottom: 8px;")
         
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(24)
@@ -565,7 +1108,8 @@ class SecureWipeApp(QWidget):
         self.progress_bar.setObjectName("progressBar")
         
         self.progress_label = QLabel("Ready to begin operation")
-        self.progress_label.setStyleSheet("color: #9CA3AF; font-weight: 500;")
+        self.progress_label.setStyleSheet("font-weight: 500;")
+        self.progress_label.setProperty("subdued", True)
         
         progress_layout.addWidget(progress_title)
         progress_layout.addWidget(self.progress_bar)
@@ -574,7 +1118,7 @@ class SecureWipeApp(QWidget):
         # Activity log
         log_title = QLabel("Activity Log")
         log_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        log_title.setStyleSheet("color: #F9FAFB; margin-top: 16px; margin-bottom: 8px;")
+        log_title.setStyleSheet("margin-top: 16px; margin-bottom: 8px;")
         
         self.activity_log = QTextEdit()
         self.activity_log.setObjectName("activityLog")
@@ -604,7 +1148,6 @@ class SecureWipeApp(QWidget):
         
         title = QLabel("Certificate Management")
         title.setFont(QFont("Segoe UI", 20, QFont.Bold))
-        title.setStyleSheet("color: #F9FAFB;")
         
         header_layout.addWidget(title)
         header_layout.addStretch()
@@ -635,6 +1178,9 @@ class SecureWipeApp(QWidget):
         self.certificates_table = QTableWidget()
         self.certificates_table.setObjectName("certificatesTable")
         
+        # IMPORTANT: Disable sorting while populating to prevent widget issues
+        self.certificates_table.setSortingEnabled(False)
+        
         # Configure table
         headers = ["Certificate ID", "Date Created", "Method", "Status", "Actions"]
         self.certificates_table.setColumnCount(len(headers))
@@ -642,25 +1188,43 @@ class SecureWipeApp(QWidget):
         
         # Configure header
         header = self.certificates_table.horizontalHeader()
-        header.setStretchLastSection(True)
+        header.setStretchLastSection(False)
+        
+        # Set resize modes
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents) 
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.Stretch)  # Actions column stretches
+        
+        # Set Actions column width - INCREASED for better button visibility
+        self.certificates_table.setColumnWidth(4, 120)  # Reduced from 160 to 120 for single button
         
         # Configure vertical header
         v_header = self.certificates_table.verticalHeader()
         v_header.setVisible(False)
+        v_header.setDefaultSectionSize(45)  # INCREASED from 40 to 45 for better button fit
+        v_header.setSectionResizeMode(QHeaderView.Fixed)
         
         # Table styling
         self.certificates_table.setAlternatingRowColors(True)
         self.certificates_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.certificates_table.setShowGrid(False)
         
+        # CRITICAL: Set minimum row height to ensure buttons are visible
+        self.certificates_table.verticalHeader().setMinimumSectionSize(45)
+        
+        # Additional table properties for better widget rendering
+        self.certificates_table.setWordWrap(False)
+        self.certificates_table.setAlternatingRowColors(True)
+        
         layout.addWidget(self.certificates_table)
         page.setLayout(layout)
         
         return page
+
+
+
         
     def _create_verification_page(self) -> QWidget:
         """Create the certificate verification page."""
@@ -682,12 +1246,11 @@ class SecureWipeApp(QWidget):
         title = QLabel("Certificate Verification")
         title.setFont(QFont("Segoe UI", 20, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: #F9FAFB;")
         
         subtitle = QLabel("Verify the authenticity and integrity of sanitization certificates")
         subtitle.setFont(QFont("Segoe UI", 12))
         subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet("color: #9CA3AF;")
+        subtitle.setProperty("subdued", True)
         subtitle.setWordWrap(True)
         
         card_layout.addWidget(title)
@@ -731,7 +1294,6 @@ class SecureWipeApp(QWidget):
         # Title
         title = QLabel("Application Settings")
         title.setFont(QFont("Segoe UI", 20, QFont.Bold))
-        title.setStyleSheet("color: #F9FAFB;")
         layout.addWidget(title)
         
         # Settings tabs
@@ -767,6 +1329,8 @@ class SecureWipeApp(QWidget):
         
         theme_combo = QComboBox()
         theme_combo.addItems(["Dark Theme", "Light Theme", "System Default"])
+        theme_combo.setCurrentText("Dark Theme")
+        theme_combo.currentTextChanged.connect(self._change_theme)
         theme_layout.addRow("Theme:", theme_combo)
         
         theme_group.setLayout(theme_layout)
@@ -862,339 +1426,6 @@ class SecureWipeApp(QWidget):
         tab.setLayout(layout)
         return tab
         
-    def _apply_enterprise_theme(self):
-        """Apply professional enterprise theme."""
-        self.setStyleSheet("""
-            /* Main Application */
-            QWidget {
-                background-color: #111827;
-                color: #F9FAFB;
-                font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
-            }
-            
-            /* Header */
-            QFrame#header {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1F2937, stop:1 #111827);
-                border-bottom: 1px solid #374151;
-            }
-            
-            /* Sidebar */
-            QFrame#sidebar {
-                background-color: #1F2937;
-                border-right: 1px solid #374151;
-            }
-            
-            /* Navigation Buttons */
-            QPushButton#navButton {
-                background: transparent;
-                color: #D1D5DB;
-                border: none;
-                border-radius: 8px;
-                padding: 12px 16px;
-                text-align: left;
-                font-weight: 500;
-                font-size: 13px;
-            }
-            
-            QPushButton#navButton:hover {
-                background-color: #374151;
-                color: #F9FAFB;
-            }
-            
-            QPushButton#navButton:pressed,
-            QPushButton#navButton[active="true"] {
-                background-color: #3B82F6;
-                color: white;
-            }
-            
-            /* Form Inputs */
-            QLineEdit#formInput, QLineEdit#searchInput {
-                background-color: #374151;
-                border: 1px solid #4B5563;
-                border-radius: 6px;
-                padding: 8px 12px;
-                color: #F9FAFB;
-                font-size: 14px;
-            }
-            
-            QLineEdit#formInput:focus, QLineEdit#searchInput:focus {
-                border-color: #3B82F6;
-                outline: none;
-            }
-            
-            QComboBox#formCombo {
-                background-color: #374151;
-                border: 1px solid #4B5563;
-                border-radius: 6px;
-                padding: 8px 12px;
-                color: #F9FAFB;
-            }
-            
-            QComboBox#formCombo::drop-down {
-                border: none;
-                width: 20px;
-            }
-            
-            QComboBox#formCombo::down-arrow {
-                image: none;
-                border: none;
-            }
-            
-            /* Buttons */
-            QPushButton#primaryButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #3B82F6, stop:1 #2563EB);
-                color: white;
-                border: none;
-                border-radius: 6px;
-                font-weight: 600;
-                font-size: 14px;
-                padding: 12px 24px;
-            }
-            
-            QPushButton#primaryButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2563EB, stop:1 #1D4ED8);
-            }
-            
-            QPushButton#primaryButton:pressed {
-                background: #1D4ED8;
-            }
-            
-            QPushButton#primaryButton:disabled {
-                background: #4B5563;
-                color: #9CA3AF;
-            }
-            
-            QPushButton#secondaryButton {
-                background: transparent;
-                color: #3B82F6;
-                border: 1px solid #3B82F6;
-                border-radius: 6px;
-                font-weight: 600;
-                font-size: 14px;
-                padding: 10px 20px;
-            }
-            
-            QPushButton#secondaryButton:hover {
-                background: #3B82F6;
-                color: white;
-            }
-            
-            QPushButton#successButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #059669, stop:1 #047857);
-                color: white;
-                border: none;
-                border-radius: 6px;
-                font-weight: 600;
-                font-size: 14px;
-                padding: 12px 24px;
-            }
-            
-            QPushButton#successButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #047857, stop:1 #065F46);
-            }
-            
-            QPushButton#successButton:disabled {
-                background: #4B5563;
-                color: #9CA3AF;
-            }
-            
-            QPushButton#dangerButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #DC2626, stop:1 #B91C1C);
-                color: white;
-                border: none;
-                border-radius: 6px;
-                font-weight: 600;
-                font-size: 14px;
-                padding: 12px 24px;
-            }
-            
-            QPushButton#dangerButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #B91C1C, stop:1 #991B1B);
-            }
-            
-            QPushButton#dangerButton:disabled {
-                background: #4B5563;
-                color: #9CA3AF;
-            }
-            
-            /* Cards */
-            QFrame#loginCard, QFrame#verificationCard, QFrame#configPanel, QFrame#progressPanel {
-                background-color: #1F2937;
-                border: 1px solid #374151;
-                border-radius: 12px;
-            }
-            
-            /* Progress Bar */
-            QProgressBar#progressBar {
-                background-color: #374151;
-                border: 1px solid #4B5563;
-                border-radius: 12px;
-                text-align: center;
-                color: #F9FAFB;
-                font-weight: 600;
-            }
-            
-            QProgressBar#progressBar::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #3B82F6, stop:1 #8B5CF6);
-                border-radius: 11px;
-            }
-            
-            /* Text Edit */
-            QTextEdit#activityLog {
-                background-color: #111827;
-                border: 1px solid #374151;
-                border-radius: 8px;
-                color: #E5E7EB;
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 11px;
-                padding: 8px;
-            }
-            
-            /* Table */
-            QTableWidget#certificatesTable {
-                background-color: #1F2937;
-                border: 1px solid #374151;
-                border-radius: 8px;
-                gridline-color: #374151;
-                color: #F9FAFB;
-            }
-            
-            QTableWidget#certificatesTable::item {
-                padding: 8px;
-                border-bottom: 1px solid #374151;
-            }
-            
-            QTableWidget#certificatesTable::item:selected {
-                background-color: #3B82F6;
-                color: white;
-            }
-            
-            QTableWidget#certificatesTable::item:alternate {
-                background-color: #111827;
-            }
-            
-            QHeaderView::section {
-                background-color: #374151;
-                color: #F9FAFB;
-                padding: 8px;
-                border: none;
-                border-right: 1px solid #4B5563;
-                font-weight: 600;
-            }
-            
-            /* Group Boxes */
-            QGroupBox {
-                color: #F9FAFB;
-                border: 1px solid #374151;
-                border-radius: 8px;
-                margin-top: 8px;
-                font-weight: 600;
-            }
-            
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 12px;
-                padding: 0 8px 0 8px;
-                color: #3B82F6;
-            }
-            
-            QGroupBox#systemInfo {
-                background-color: #1F2937;
-            }
-            
-            /* Tabs */
-            QTabWidget#settingsTabs::pane {
-                border: 1px solid #374151;
-                border-radius: 8px;
-                background-color: #1F2937;
-            }
-            
-            QTabWidget#settingsTabs::tab-bar {
-                alignment: left;
-            }
-            
-            QTabBar::tab {
-                background-color: #374151;
-                color: #D1D5DB;
-                padding: 8px 16px;
-                margin-right: 2px;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }
-            
-            QTabBar::tab:selected {
-                background-color: #3B82F6;
-                color: white;
-            }
-            
-            QTabBar::tab:hover {
-                background-color: #4B5563;
-                color: #F9FAFB;
-            }
-            
-            /* Checkboxes */
-            QCheckBox {
-                color: #F9FAFB;
-                spacing: 8px;
-            }
-            
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border: 2px solid #4B5563;
-                border-radius: 3px;
-                background-color: #374151;
-            }
-            
-            QCheckBox::indicator:checked {
-                background-color: #3B82F6;
-                border-color: #3B82F6;
-            }
-            
-            /* Spin boxes */
-            QSpinBox {
-                background-color: #374151;
-                border: 1px solid #4B5563;
-                border-radius: 4px;
-                padding: 4px 8px;
-                color: #F9FAFB;
-            }
-            
-            /* Scroll bars */
-            QScrollBar:vertical {
-                background-color: #1F2937;
-                width: 12px;
-                border-radius: 6px;
-            }
-            
-            QScrollBar::handle:vertical {
-                background-color: #4B5563;
-                border-radius: 6px;
-                min-height: 20px;
-            }
-            
-            QScrollBar::handle:vertical:hover {
-                background-color: #6B7280;
-            }
-        """)
-        
-        # Set application palette
-        palette = self.palette()
-        palette.setColor(QPalette.Window, QColor("#111827"))
-        palette.setColor(QPalette.WindowText, QColor("#F9FAFB"))
-        palette.setColor(QPalette.Base, QColor("#1F2937"))
-        palette.setColor(QPalette.AlternateBase, QColor("#111827"))
-        palette.setColor(QPalette.Text, QColor("#F9FAFB"))
-        self.setPalette(palette)
-        
     def _setup_keyboard_shortcuts(self):
         """Setup keyboard shortcuts for better UX."""
         from PySide6.QtGui import QKeySequence, QShortcut
@@ -1240,8 +1471,19 @@ class SecureWipeApp(QWidget):
             
         # Add to activity log if wipe page is active
         if hasattr(self, 'activity_log'):
-            log_entry = f"[{timestamp}] {message}\n"
-            self.activity_log.append(log_entry.rstrip())
+            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+            log_entry = f"[{timestamp}] {message}<br>"
+            colors = {
+                "info": self.colors['primary_start'],
+                "success": self.colors['success_start'],
+                "error": self.colors['danger_start'],
+                "warning": "#D97706",
+                "processing": self.colors['primary_start']
+            }
+            color = colors.get(status_type, self.colors['disabled_text'])
+            self.activity_log.moveCursor(QTextCursor.End)
+            self.activity_log.textCursor().insertHtml(f'<span style="color:{color};">{log_entry}</span>')
+            self.activity_log.ensureCursorVisible()
             
     def authenticate_user(self):
         """Handle user authentication with comprehensive validation."""
@@ -1285,8 +1527,10 @@ class SecureWipeApp(QWidget):
             self.status_indicator.set_status("online")
             self.user_status_label.setText(f"Connected as {email}")
             self.select_target_button.setEnabled(True)
-            
-            self._update_status("Authentication successful", "success")
+            self.logout_button.setEnabled(True)  # Enable logout button on successful login
+            self.nav_buttons[1].setEnabled(True)  # Enable Wipe Operations
+            self.nav_buttons[2].setEnabled(True)  # Enable Certificates
+            self._update_status(f"Authentication successful at 07:26 PM IST, Sunday, September 28, 2025", "success")
             
             # Navigate to wipe page
             self.switch_page(1)
@@ -1342,13 +1586,13 @@ class SecureWipeApp(QWidget):
         # Warning banner
         warning_frame = QFrame()
         warning_frame.setObjectName("warningBanner")
-        warning_frame.setStyleSheet("""
-            QFrame#warningBanner {
-                background-color: #FEF3C7;
-                border: 1px solid #F59E0B;
+        warning_frame.setStyleSheet(f"""
+            QFrame#warningBanner {{
+                background-color: {self.colors['warning_bg']};
+                border: 1px solid {self.colors['warning_border']};
                 border-radius: 8px;
                 padding: 12px;
-            }
+            }}
         """)
         
         warning_layout = QHBoxLayout()
@@ -1360,7 +1604,7 @@ class SecureWipeApp(QWidget):
             "This operation will permanently destroy ALL data on the selected target. "
             "This action cannot be undone. Ensure you have proper authorization and backups."
         )
-        warning_text.setStyleSheet("color: #92400E; font-weight: 500;")
+        warning_text.setStyleSheet(f"color: {self.colors['warning_text']}; font-weight: 500;")
         warning_text.setWordWrap(True)
         
         warning_layout.addWidget(warning_icon)
@@ -1642,62 +1886,82 @@ class SecureWipeApp(QWidget):
             
     def _populate_certificates_table(self, certificates: List[Dict[str, Any]]):
         """Populate the certificates table with data."""
-        self.certificates_table.setRowCount(len(certificates))
+        # IMPORTANT: Disable sorting during population to prevent widget loss
+        self.certificates_table.setSortingEnabled(False)
+        
+        self.certificates_table.setRowCount(0)
+        self.certificates_table.clearContents()
+        
+        if not certificates:
+            # Re-enable sorting even if no data
+            self.certificates_table.setSortingEnabled(True)
+            return
         
         for row, cert in enumerate(certificates):
+            # Add row
+            self.certificates_table.insertRow(row)
+            
             payload = cert.get("payload", {})
             cert_id = cert.get("certificateId", payload.get("certificate_id", "Unknown"))
-            
-            # Format date
-            start_time = payload.get("start_time", "")
-            formatted_date = self._format_timestamp(start_time)
-            
-            # Extract method and status
+            formatted_date = self._format_timestamp(payload.get("start_time", ""))
             method = payload.get("method", "Unknown")
             status = payload.get("final_status", "Unknown")
             
-            # Create table items
-            items = [
-                QTableWidgetItem(str(cert_id)),
-                QTableWidgetItem(formatted_date),
-                QTableWidgetItem(method),
-                QTableWidgetItem(status),
-            ]
+            # Add data items - first 4 columns
+            self.certificates_table.setItem(row, 0, QTableWidgetItem(str(cert_id)))
+            self.certificates_table.setItem(row, 1, QTableWidgetItem(formatted_date))
+            self.certificates_table.setItem(row, 2, QTableWidgetItem(method))
+            self.certificates_table.setItem(row, 3, QTableWidgetItem(status))
             
-            # Set item properties
-            for col, item in enumerate(items):
-                item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-                if col == 0:  # Store full certificate data in first column
-                    item.setData(Qt.UserRole, cert)
-                self.certificates_table.setItem(row, col, item)
-                
-            # Create action button
-            action_widget = QWidget()
-            action_layout = QHBoxLayout()
-            action_layout.setContentsMargins(8, 4, 8, 4)
-            action_layout.setSpacing(4)
+            # Create SINGLE button for Actions column
+            btn = QPushButton("Actions")
+            btn.setFixedSize(250, 35)  # Set explicit size
+            btn.setObjectName("actionButton")  # For CSS styling
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda checked, c=cert, cid=cert_id: self._show_actions_menu(c, cid))
             
-            download_btn = QPushButton("Download")
-            download_btn.setObjectName("secondaryButton")
-            download_btn.setFixedHeight(28)
-            download_btn.setCursor(Qt.PointingHandCursor)
-            download_btn.clicked.connect(
-                lambda checked, cid=cert_id: self.download_certificate(cid)
-            )
+            # Set button in cell
+            self.certificates_table.setCellWidget(row, 4, btn)
             
-            view_btn = QPushButton("View")
-            view_btn.setObjectName("primaryButton")
-            view_btn.setFixedHeight(28)
-            view_btn.setCursor(Qt.PointingHandCursor)
-            view_btn.clicked.connect(
-                lambda checked, c=cert: self._view_certificate_details(c)
-            )
-            
-            action_layout.addWidget(view_btn)
-            action_layout.addWidget(download_btn)
-            action_widget.setLayout(action_layout)
-            
-            self.certificates_table.setCellWidget(row, 4, action_widget)
+            # CRITICAL: Set explicit row height for this row
+            self.certificates_table.setRowHeight(row, 45)
+        
+        # Re-enable sorting after population is complete
+        self.certificates_table.setSortingEnabled(True)
+        
+        # Force table refresh
+        self.certificates_table.viewport().update()
+        self.certificates_table.repaint()
+        self.certificates_table.sortItems(1, Qt.DescendingOrder)  # Sort by Date Created descending
+
+    def _show_actions_menu(self, cert, cert_id):
+        """Show actions menu when button is clicked."""
+        from PySide6.QtWidgets import QMessageBox  # Changed from PyQt5 to PySide6
+        
+        msg = QMessageBox(self.certificates_table)
+        msg.setWindowTitle("Certificate Actions")
+        msg.setText(f"Choose action for certificate: {cert_id}")
+        msg.setIcon(QMessageBox.Icon.Question)  # Note: PySide6 syntax
+        
+        view_btn = msg.addButton("👁 View Details", QMessageBox.ButtonRole.ActionRole)
+        download_btn = msg.addButton("📥 Download", QMessageBox.ButtonRole.ActionRole)
+        cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        
+        result = msg.exec()  # Note: exec() not exec_() in PySide6
+        
+        if msg.clickedButton() == view_btn:
+            self._view_certificate_details(cert)
+        elif msg.clickedButton() == download_btn:
+            self.download_certificate(cert_id)
+
+
+
+
+
+
+
+
+
             
     def _format_timestamp(self, timestamp_str: str) -> str:
         """Format timestamp for display."""
@@ -1725,7 +1989,7 @@ class SecureWipeApp(QWidget):
         # Title
         title = QLabel("Certificate Information")
         title.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        title.setStyleSheet("color: #F9FAFB; margin-bottom: 8px;")
+        title.setStyleSheet("margin-bottom: 8px;")
         layout.addWidget(title)
         
         # Certificate details
@@ -1753,10 +2017,10 @@ class SecureWipeApp(QWidget):
         
         for label_text, value in cert_info:
             label = QLabel(f"{label_text}:")
-            label.setStyleSheet("font-weight: 600; color: #9CA3AF;")
+            label.setStyleSheet("font-weight: 600;")
+            label.setProperty("subdued", True)
             
             value_label = QLabel(str(value))
-            value_label.setStyleSheet("color: #F9FAFB;")
             value_label.setWordWrap(True)
             value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
             
