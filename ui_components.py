@@ -1,770 +1,1918 @@
 #!/usr/bin/env python3
+"""
+SecureWipe Desktop Application - UI Components
+Enterprise-grade user interface for secure data sanitization
+"""
 import os
 import sys
 import json
 import datetime
 import webbrowser
 import time
+from typing import List, Dict, Any, Optional
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QFileDialog, QLineEdit, QLabel, QMessageBox, QComboBox,
     QFrame, QSizePolicy, QProgressBar, QSpacerItem, QStackedWidget,
-    QScrollArea, QGridLayout, QListWidget, QListWidgetItem, QDialog
+    QScrollArea, QGridLayout, QListWidget, QListWidgetItem, QDialog,
+    QTextEdit, QSplitter, QGroupBox, QFormLayout, QCheckBox, QSpinBox,
+    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QStatusBar
 )
-from PySide6.QtGui import QFont, QIcon, QPalette, QColor
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QAction
+from PySide6.QtCore import Qt, QTimer, QThread, QObject, Signal, QSize, QPropertyAnimation, QEasingCurve
 
 from business_logic import APIClient, list_drives, secure_delete
 
 
-class StatusDot(QLabel):
-    """Small colored dot used for status indicators."""
-    def __init__(self, color="#d0d0d0", parent=None):
+class StatusIndicator(QLabel):
+    """Professional status indicator with animation support."""
+    
+    def __init__(self, status: str = "offline", parent=None):
         super().__init__(parent)
-        self.setFixedSize(12, 12)
-        self.setStyleSheet(f"border-radius:6px; background:{color};")
+        self.setFixedSize(16, 16)
+        self.status = status
+        self._update_appearance()
+        
+    def set_status(self, status: str):
+        """Update status with animation."""
+        self.status = status
+        self._update_appearance()
+        
+    def _update_appearance(self):
+        colors = {
+            "offline": "#DC2626",  # Red
+            "online": "#059669",   # Green
+            "warning": "#D97706",  # Amber
+            "processing": "#2563EB" # Blue
+        }
+        
+        color = colors.get(self.status, "#6B7280")
+        self.setStyleSheet(f"""
+            QLabel {{
+                border-radius: 8px;
+                background: {color};
+                border: 2px solid rgba(255, 255, 255, 0.2);
+            }}
+        """)
 
 
-class WipeApp(QWidget):
+class LoadingSpinner(QLabel):
+    """Professional loading spinner widget."""
+    
+    def __init__(self, size: int = 24, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.angle = 0
+        self.timer = QTimer()
+        self.timer.timeout.connect(self._rotate)
+        
+    def start(self):
+        """Start spinner animation."""
+        self.timer.start(50)
+        
+    def stop(self):
+        """Stop spinner animation."""
+        self.timer.stop()
+        
+    def _rotate(self):
+        self.angle = (self.angle + 15) % 360
+        self.update()
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Draw spinner
+        painter.translate(self.width() / 2, self.height() / 2)
+        painter.rotate(self.angle)
+        
+        pen = painter.pen()
+        pen.setWidth(3)
+        pen.setColor(QColor("#3B82F6"))
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        
+        for i in range(8):
+            painter.drawLine(0, -10, 0, -6)
+            painter.rotate(45)
+
+
+class Toast(QLabel):
+    """Professional toast notification."""
+    
+    def __init__(self, message: str, toast_type: str = "info", parent=None):
+        super().__init__(message, parent)
+        self.setWordWrap(True)
+        self.setAlignment(Qt.AlignCenter)
+        
+        colors = {
+            "success": "#059669",
+            "error": "#DC2626", 
+            "warning": "#D97706",
+            "info": "#2563EB"
+        }
+        
+        bg_color = colors.get(toast_type, "#2563EB")
+        self.setStyleSheet(f"""
+            QLabel {{
+                background: {bg_color};
+                color: white;
+                padding: 12px 16px;
+                border-radius: 8px;
+                font-weight: 600;
+                border: none;
+                margin: 4px;
+            }}
+        """)
+        
+        # Auto-hide after 3 seconds
+        QTimer.singleShot(3000, self.hide)
+
+
+class SecureWipeApp(QWidget):
+    """
+    Enterprise-grade SecureWipe Desktop Application.
+    
+    Features:
+    - Professional UI/UX design
+    - Comprehensive error handling
+    - Real-time status updates
+    - Advanced logging capabilities
+    - Security-focused workflows
+    """
+    
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SecureWipe — Desktop")
-        self.resize(1000, 680)
         
-        # Initialize API client
+        # Application state
         self.api_client = APIClient("https://express-server-production-b4f4.up.railway.app")
+        self.all_certificates: List[Dict[str, Any]] = []
+        self.current_wipe_process: Optional[QThread] = None
+        self.is_authenticated = False
         
-        # Store certificates for filtering
-        self.all_certs = []
-
-        self._apply_global_styles()
-
-        # top-level layout
-        root = QVBoxLayout()
-        root.setContentsMargins(18, 18, 18, 18)
-        root.setSpacing(14)
-
-        # header row (title + nav + status)
-        header = QHBoxLayout()
-        title = QLabel("🔐 SecureWipe")
-        title.setFont(QFont("Segoe UI", 18, QFont.Bold))
-        title.setStyleSheet("color: #e6eef8;")
-        header.addWidget(title)
-
-        # navbar buttons
-        nav_row = QHBoxLayout()
-        nav_row.setSpacing(8)
-        self.btn_login_nav = QPushButton("Login")
-        self.btn_wipe_nav = QPushButton("Wipe")
-        self.btn_certs_nav = QPushButton("Certificates")
-        self.btn_verify_nav = QPushButton("Verify")
-
-        for b in (self.btn_login_nav, self.btn_wipe_nav, self.btn_certs_nav, self.btn_verify_nav):
-            b.setCursor(Qt.PointingHandCursor)
-            b.setFixedHeight(34)
-            b.setObjectName("navBtn")
-
-        self.btn_login_nav.clicked.connect(lambda: self.switch_page(0))
-        self.btn_wipe_nav.clicked.connect(lambda: self.switch_page(1))
-        self.btn_certs_nav.clicked.connect(lambda: self.switch_page(2))
-        self.btn_verify_nav.clicked.connect(lambda: self.switch_page(3))
-
-        nav_row.addWidget(self.btn_login_nav)
-        nav_row.addWidget(self.btn_wipe_nav)
-        nav_row.addWidget(self.btn_certs_nav)
-        nav_row.addWidget(self.btn_verify_nav)
-        header.addLayout(nav_row)
-        header.addStretch()
-
-        # status area (keeps simple status indicator, not a sign-in bar)
-        self.status_dot = StatusDot("#E53E3E")
-        self.status_text = QLabel("Not signed in")
-        self.status_text.setFont(QFont("Segoe UI", 10))
-        self.status_text.setStyleSheet("color: #94a3b8;")
-        status_box = QHBoxLayout()
-        status_box.setSpacing(8)
-        status_box.addWidget(self.status_dot, alignment=Qt.AlignVCenter)
-        status_box.addWidget(self.status_text, alignment=Qt.AlignVCenter)
-        header.addLayout(status_box)
-
-        root.addLayout(header)
-
-        # Stacked pages
-        self.stack = QStackedWidget()
-        self.stack.addWidget(self._build_login_page())     # index 0
-        self.stack.addWidget(self._build_wipe_page())      # index 1
-        self.stack.addWidget(self._build_certs_page())     # index 2
-        self.stack.addWidget(self._build_verify_page())    # index 3
-        root.addWidget(self.stack, stretch=1)
-
-        self.setLayout(root)
-
-        # progress timer for wipe progress simulation
-        self._progress_timer = QTimer()
-        self._progress_timer.setInterval(30)
-        self._progress_timer.timeout.connect(self._advance_progress)
-
-        # default to login page
+        # UI Components
+        self.status_indicator: Optional[StatusIndicator] = None
+        self.loading_spinner: Optional[LoadingSpinner] = None
+        self.progress_bar: Optional[QProgressBar] = None
+        self.status_bar: Optional[QStatusBar] = None
+        
+        # Timers
+        self.progress_timer = QTimer()
+        self.progress_timer.timeout.connect(self._advance_progress)
+        self.progress_timer.setInterval(50)
+        
+        # Initialize UI
+        self._init_ui()
+        self._apply_enterprise_theme()
+        self._setup_keyboard_shortcuts()
+        
+        # Start on login page
         self.switch_page(0)
-
-    # ---------------- UI builders ----------------
-    def _build_login_page(self):
+        self._update_status("Application initialized", "info")
+        
+    def _init_ui(self):
+        """Initialize the user interface."""
+        self.setWindowTitle("SecureWipe Enterprise - Data Sanitization Platform")
+        self.setMinimumSize(1200, 800)
+        self.resize(1400, 900)
+        
+        # Main layout
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Header
+        header = self._create_header()
+        main_layout.addWidget(header)
+        
+        # Content area with sidebar
+        content_splitter = QSplitter(Qt.Horizontal)
+        
+        # Sidebar
+        sidebar = self._create_sidebar()
+        content_splitter.addWidget(sidebar)
+        
+        # Main content
+        self.content_stack = QStackedWidget()
+        self.content_stack.addWidget(self._create_login_page())
+        self.content_stack.addWidget(self._create_wipe_page()) 
+        self.content_stack.addWidget(self._create_certificates_page())
+        self.content_stack.addWidget(self._create_verification_page())
+        self.content_stack.addWidget(self._create_settings_page())
+        
+        content_splitter.addWidget(self.content_stack)
+        content_splitter.setSizes([300, 1100])
+        
+        main_layout.addWidget(content_splitter)
+        
+        # Status bar
+        self.status_bar = QStatusBar()
+        self.status_bar.setStyleSheet("QStatusBar { border-top: 1px solid #374151; padding: 4px; }")
+        main_layout.addWidget(self.status_bar)
+        
+        self.setLayout(main_layout)
+        
+    def _create_header(self) -> QWidget:
+        """Create the application header."""
+        header = QFrame()
+        header.setFixedHeight(70)
+        header.setObjectName("header")
+        
+        layout = QHBoxLayout()
+        layout.setContentsMargins(24, 16, 24, 16)
+        
+        # Logo and title
+        title_container = QHBoxLayout()
+        
+        # App icon/logo (placeholder)
+        logo = QLabel("🔒")
+        logo.setFont(QFont("Segoe UI", 24))
+        logo.setStyleSheet("color: #3B82F6;")
+        title_container.addWidget(logo)
+        
+        title_layout = QVBoxLayout()
+        title_layout.setSpacing(0)
+        
+        app_title = QLabel("SecureWipe Enterprise")
+        app_title.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        app_title.setStyleSheet("color: #F9FAFB;")
+        
+        subtitle = QLabel("Professional Data Sanitization Platform")
+        subtitle.setFont(QFont("Segoe UI", 10))
+        subtitle.setStyleSheet("color: #9CA3AF;")
+        
+        title_layout.addWidget(app_title)
+        title_layout.addWidget(subtitle)
+        title_container.addLayout(title_layout)
+        
+        layout.addLayout(title_container)
+        layout.addStretch()
+        
+        # User info and status
+        user_info = QHBoxLayout()
+        user_info.setSpacing(12)
+        
+        self.status_indicator = StatusIndicator("offline")
+        user_info.addWidget(self.status_indicator)
+        
+        self.user_status_label = QLabel("Not Connected")
+        self.user_status_label.setFont(QFont("Segoe UI", 10, QFont.Medium))
+        self.user_status_label.setStyleSheet("color: #9CA3AF;")
+        user_info.addWidget(self.user_status_label)
+        
+        # Loading spinner
+        self.loading_spinner = LoadingSpinner(20)
+        self.loading_spinner.hide()
+        user_info.addWidget(self.loading_spinner)
+        
+        layout.addLayout(user_info)
+        header.setLayout(layout)
+        
+        return header
+        
+    def _create_sidebar(self) -> QWidget:
+        """Create the navigation sidebar."""
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(300)
+        
+        layout = QVBoxLayout()
+        layout.setContentsMargins(16, 24, 16, 16)
+        layout.setSpacing(8)
+        
+        # Navigation buttons
+        self.nav_buttons = []
+        nav_items = [
+            ("Authentication", "🔐", 0, "Secure login and authentication"),
+            ("Wipe Operations", "🗑️", 1, "Secure data sanitization"),
+            ("Certificates", "📋", 2, "View and manage certificates"),
+            ("Verification", "✅", 3, "Verify certificate authenticity"), 
+            ("Settings", "⚙️", 4, "Application preferences")
+        ]
+        
+        for name, icon, page_idx, tooltip in nav_items:
+            btn = self._create_nav_button(name, icon, page_idx, tooltip)
+            self.nav_buttons.append(btn)
+            layout.addWidget(btn)
+            
+        layout.addStretch()
+        
+        # System info
+        sys_info = self._create_system_info_panel()
+        layout.addWidget(sys_info)
+        
+        sidebar.setLayout(layout)
+        return sidebar
+        
+    def _create_nav_button(self, name: str, icon: str, page_idx: int, tooltip: str) -> QPushButton:
+        """Create a navigation button."""
+        btn = QPushButton(f"{icon}  {name}")
+        btn.setObjectName("navButton")
+        btn.setFixedHeight(48)
+        btn.setToolTip(tooltip)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.clicked.connect(lambda: self.switch_page(page_idx))
+        return btn
+        
+    def _create_system_info_panel(self) -> QWidget:
+        """Create system information panel."""
+        panel = QGroupBox("System Information")
+        panel.setObjectName("systemInfo")
+        
+        layout = QFormLayout()
+        layout.setSpacing(6)
+        
+        # System details
+        import platform
+        system_info = [
+            ("OS:", f"{platform.system()} {platform.release()}"),
+            ("Python:", f"{sys.version.split()[0]}"),
+            ("Architecture:", platform.machine()),
+        ]
+        
+        for label, value in system_info:
+            label_widget = QLabel(label)
+            label_widget.setStyleSheet("font-weight: 600; color: #9CA3AF;")
+            
+            value_widget = QLabel(value)
+            value_widget.setStyleSheet("color: #F9FAFB; font-family: 'Consolas', monospace;")
+            value_widget.setWordWrap(True)
+            
+            layout.addRow(label_widget, value_widget)
+            
+        panel.setLayout(layout)
+        return panel
+        
+    def _create_login_page(self) -> QWidget:
+        """Create the authentication page."""
         page = QWidget()
         layout = QVBoxLayout()
-        layout.setSpacing(12)
-
+        layout.setContentsMargins(48, 48, 48, 48)
+        layout.setAlignment(Qt.AlignCenter)
+        
+        # Login card
         card = QFrame()
-        card.setObjectName("card")
+        card.setObjectName("loginCard")
+        card.setMaximumWidth(450)
+        
         card_layout = QVBoxLayout()
-        card_layout.setContentsMargins(16, 16, 16, 16)
-        card_layout.setSpacing(10)
-
-        lbl = QLabel("Sign in to your account")
-        lbl.setFont(QFont("Segoe UI", 13, QFont.DemiBold))
-        card_layout.addWidget(lbl)
-
-        self.username = QLineEdit()
-        self.username.setPlaceholderText("Email")
-        self.username.setFixedHeight(36)
-        card_layout.addWidget(self.username)
-
-        self.password = QLineEdit()
-        self.password.setPlaceholderText("Password")
-        self.password.setFixedHeight(36)
-        self.password.setEchoMode(QLineEdit.Password)
-        card_layout.addWidget(self.password)
-
-        self.login_btn = QPushButton("Sign in")
-        self.login_btn.setCursor(Qt.PointingHandCursor)
-        self.login_btn.setFixedHeight(38)
-        self.login_btn.setObjectName("primaryBtn")
-        self.login_btn.clicked.connect(self.login)
-        card_layout.addWidget(self.login_btn)
-
+        card_layout.setContentsMargins(40, 40, 40, 40)
+        card_layout.setSpacing(24)
+        
+        # Header
+        header_layout = QVBoxLayout()
+        header_layout.setAlignment(Qt.AlignCenter)
+        header_layout.setSpacing(8)
+        
+        title = QLabel("Secure Authentication")
+        title.setFont(QFont("Segoe UI", 20, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color: #F9FAFB;")
+        
+        subtitle = QLabel("Access your SecureWipe Enterprise account")
+        subtitle.setFont(QFont("Segoe UI", 12))
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet("color: #9CA3AF;")
+        
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
+        card_layout.addLayout(header_layout)
+        
+        # Login form
+        form_layout = QVBoxLayout()
+        form_layout.setSpacing(16)
+        
+        # Email field
+        email_layout = QVBoxLayout()
+        email_layout.setSpacing(6)
+        
+        email_label = QLabel("Email Address")
+        email_label.setStyleSheet("font-weight: 600; color: #F9FAFB;")
+        
+        self.email_input = QLineEdit()
+        self.email_input.setPlaceholderText("user@company.com")
+        self.email_input.setFixedHeight(44)
+        self.email_input.setObjectName("formInput")
+        
+        email_layout.addWidget(email_label)
+        email_layout.addWidget(self.email_input)
+        
+        # Password field  
+        password_layout = QVBoxLayout()
+        password_layout.setSpacing(6)
+        
+        password_label = QLabel("Password")
+        password_label.setStyleSheet("font-weight: 600; color: #F9FAFB;")
+        
+        self.password_input = QLineEdit()
+        self.password_input.setPlaceholderText("Enter your password")
+        self.password_input.setFixedHeight(44)
+        self.password_input.setEchoMode(QLineEdit.Password)
+        self.password_input.setObjectName("formInput")
+        self.password_input.returnPressed.connect(self.authenticate_user)
+        
+        password_layout.addWidget(password_label)
+        password_layout.addWidget(self.password_input)
+        
+        form_layout.addLayout(email_layout)
+        form_layout.addLayout(password_layout)
+        
+        # Remember me checkbox
+        self.remember_checkbox = QCheckBox("Keep me signed in")
+        self.remember_checkbox.setStyleSheet("color: #9CA3AF;")
+        form_layout.addWidget(self.remember_checkbox)
+        
+        card_layout.addLayout(form_layout)
+        
+        # Login button
+        self.login_button = QPushButton("Sign In")
+        self.login_button.setFixedHeight(48)
+        self.login_button.setObjectName("primaryButton")
+        self.login_button.setCursor(Qt.PointingHandCursor)
+        self.login_button.clicked.connect(self.authenticate_user)
+        card_layout.addWidget(self.login_button)
+        
+        # Additional options
+        options_layout = QHBoxLayout()
+        options_layout.setAlignment(Qt.AlignCenter)
+        
+        help_link = QLabel('<a href="#" style="color: #3B82F6;">Need help?</a>')
+        help_link.setOpenExternalLinks(False)
+        options_layout.addWidget(help_link)
+        
+        card_layout.addLayout(options_layout)
+        
         card.setLayout(card_layout)
-        layout.addWidget(card, alignment=Qt.AlignTop)
-        layout.addStretch()
+        layout.addWidget(card)
         page.setLayout(layout)
+        
         return page
-
-    def _build_wipe_page(self):
+        
+    def _create_wipe_page(self) -> QWidget:
+        """Create the data wiping operations page."""
         page = QWidget()
         layout = QHBoxLayout()
-        layout.setSpacing(16)
-
-        left_col = QVBoxLayout()
-        left_col.setSpacing(12)
-
-        wipe_card = QFrame()
-        wipe_card.setObjectName("card")
-        wipe_card_layout = QVBoxLayout()
-        wipe_card_layout.setContentsMargins(16, 16, 16, 16)
-        wipe_card_layout.setSpacing(10)
-
-        title = QLabel("Wipe configuration")
-        title.setFont(QFont("Segoe UI", 12, QFont.DemiBold))
-        wipe_card_layout.addWidget(title)
-
-        cap_label = QLabel("Device capacity (GB, optional)")
-        wipe_card_layout.addWidget(cap_label)
-        self.capacity_input = QLineEdit()
-        self.capacity_input.setPlaceholderText("e.g. 512")
-        self.capacity_input.setFixedHeight(34)
-        wipe_card_layout.addWidget(self.capacity_input)
-
-        wipe_card_layout.addWidget(QLabel("Wipe method"))
-        self.method_box = QComboBox()
-        self.method_box.setFixedHeight(34)
-        self.method_box.addItems(["zero-fill-1pass", "random-fill-3pass", "dod-5220.22-m"])
-        wipe_card_layout.addWidget(self.method_box)
-
-        wipe_card_layout.addWidget(QLabel("Wipe policy"))
-        self.policy_box = QComboBox()
-        self.policy_box.setFixedHeight(34)
-        self.policy_box.addItems(["NIST SP 800-88", "DoD 5220.22-M", "Custom Policy"])
-        wipe_card_layout.addWidget(self.policy_box)
-
-        # actions row
-        actions = QHBoxLayout()
-        actions.setSpacing(12)
-        self.select_btn = QPushButton("Select drive & wipe")
-        self.select_btn.setEnabled(False)
-        self.select_btn.setCursor(Qt.PointingHandCursor)
-        self.select_btn.setObjectName("successBtn")
-        self.select_btn.setFixedHeight(40)
-        self.select_btn.clicked.connect(self.select_and_wipe)
-        actions.addWidget(self.select_btn)
-
-        self.progress = QProgressBar()
-        self.progress.setFixedHeight(18)
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        self.progress.setTextVisible(False)
-        actions.addWidget(self.progress, stretch=1)
-
-        wipe_card_layout.addLayout(actions)
-        wipe_card.setLayout(wipe_card_layout)
-
-        left_col.addWidget(wipe_card)
-        left_col.addStretch()
-        layout.addLayout(left_col, 2)
-
-        # right info / branding
-        right_col = QVBoxLayout()
-        info = QLabel()
-        info.setText(
-            "<div style='font-size:14px;color:#e6eef8;'>"
-            "<b>SecureWipe</b><br>"
-            "<span style='color:#9fb0c8'>Fast, verifiable secure deletions</span><br><br>"
-            "<span style='color:#b9c9d9;font-size:11px'>"
-            "• Wipe methods: zero / random / DoD<br>"
-            "• Server-signed certificates and PDFs<br>"
-            "• Cloud upload for signed certificates"
-            "</span></div>"
-        )
-        info.setAlignment(Qt.AlignTop)
-        right_col.addWidget(info)
-        right_col.addStretch()
-        layout.addLayout(right_col, 1)
-
+        layout.setContentsMargins(32, 32, 32, 32)
+        layout.setSpacing(24)
+        
+        # Left panel - Configuration
+        config_panel = QFrame()
+        config_panel.setObjectName("configPanel")
+        config_panel.setMinimumWidth(400)
+        config_panel.setMaximumWidth(500)
+        
+        config_layout = QVBoxLayout()
+        config_layout.setContentsMargins(24, 24, 24, 24)
+        config_layout.setSpacing(20)
+        
+        # Panel title
+        title = QLabel("Wipe Configuration")
+        title.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        title.setStyleSheet("color: #F9FAFB; margin-bottom: 8px;")
+        config_layout.addWidget(title)
+        
+        # Configuration form
+        form = QFormLayout()
+        form.setSpacing(12)
+        
+        # Wipe method
+        method_label = QLabel("Sanitization Method:")
+        method_label.setStyleSheet("font-weight: 600; color: #F9FAFB;")
+        
+        self.method_combo = QComboBox()
+        self.method_combo.setFixedHeight(40)
+        self.method_combo.setObjectName("formCombo")
+        self.method_combo.addItems([
+            "NIST SP 800-88 Rev. 1 (Recommended)",
+            "DoD 5220.22-M (3-Pass)",
+            "Random Fill (7-Pass)", 
+            "Zero Fill (Single Pass)",
+            "Custom Pattern"
+        ])
+        
+        # Security level
+        security_label = QLabel("Security Level:")
+        security_label.setStyleSheet("font-weight: 600; color: #F9FAFB;")
+        
+        self.security_combo = QComboBox()
+        self.security_combo.setFixedHeight(40)
+        self.security_combo.setObjectName("formCombo")
+        self.security_combo.addItems([
+            "Maximum Security (Slow)",
+            "High Security (Recommended)", 
+            "Standard Security (Fast)",
+            "Basic Security (Fastest)"
+        ])
+        
+        # Verification
+        verify_label = QLabel("Verification:")
+        verify_label.setStyleSheet("font-weight: 600; color: #F9FAFB;")
+        
+        self.verification_check = QCheckBox("Enable post-wipe verification")
+        self.verification_check.setChecked(True)
+        self.verification_check.setStyleSheet("color: #F9FAFB;")
+        
+        form.addRow(method_label, self.method_combo)
+        form.addRow(security_label, self.security_combo)
+        form.addRow(verify_label, self.verification_check)
+        
+        config_layout.addLayout(form)
+        
+        # Action buttons
+        button_layout = QVBoxLayout()
+        button_layout.setSpacing(12)
+        
+        self.select_target_button = QPushButton("Select Target & Begin Wipe")
+        self.select_target_button.setFixedHeight(50)
+        self.select_target_button.setObjectName("successButton")
+        self.select_target_button.setCursor(Qt.PointingHandCursor)
+        self.select_target_button.setEnabled(False)
+        self.select_target_button.clicked.connect(self.initiate_wipe_process)
+        
+        self.cancel_button = QPushButton("Cancel Operation")
+        self.cancel_button.setFixedHeight(42)
+        self.cancel_button.setObjectName("dangerButton")
+        self.cancel_button.setCursor(Qt.PointingHandCursor)
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel_wipe_process)
+        
+        button_layout.addWidget(self.select_target_button)
+        button_layout.addWidget(self.cancel_button)
+        
+        config_layout.addLayout(button_layout)
+        config_layout.addStretch()
+        
+        config_panel.setLayout(config_layout)
+        
+        # Right panel - Progress and logs
+        progress_panel = QFrame()
+        progress_panel.setObjectName("progressPanel")
+        
+        progress_layout = QVBoxLayout()
+        progress_layout.setContentsMargins(24, 24, 24, 24)
+        progress_layout.setSpacing(16)
+        
+        # Progress section
+        progress_title = QLabel("Operation Progress")
+        progress_title.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        progress_title.setStyleSheet("color: #F9FAFB; margin-bottom: 8px;")
+        
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(24)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setObjectName("progressBar")
+        
+        self.progress_label = QLabel("Ready to begin operation")
+        self.progress_label.setStyleSheet("color: #9CA3AF; font-weight: 500;")
+        
+        progress_layout.addWidget(progress_title)
+        progress_layout.addWidget(self.progress_bar)
+        progress_layout.addWidget(self.progress_label)
+        
+        # Activity log
+        log_title = QLabel("Activity Log")
+        log_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        log_title.setStyleSheet("color: #F9FAFB; margin-top: 16px; margin-bottom: 8px;")
+        
+        self.activity_log = QTextEdit()
+        self.activity_log.setObjectName("activityLog")
+        self.activity_log.setReadOnly(True)
+        self.activity_log.setFont(QFont("Consolas", 9))
+        
+        progress_layout.addWidget(log_title)
+        progress_layout.addWidget(self.activity_log)
+        
+        progress_panel.setLayout(progress_layout)
+        
+        layout.addWidget(config_panel)
+        layout.addWidget(progress_panel)
         page.setLayout(layout)
+        
         return page
-
-    def _build_certs_page(self):
+        
+    def _create_certificates_page(self) -> QWidget:
+        """Create the certificates management page."""
         page = QWidget()
         layout = QVBoxLayout()
-        layout.setSpacing(10)
-
-        header_row = QHBoxLayout()
-        header_label = QLabel("Certificates")
-        header_label.setFont(QFont("Segoe UI", 13, QFont.DemiBold))
-        header_row.addWidget(header_label)
-        header_row.addStretch()
-
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search by ID, status or method...")
-        self.search_input.setFixedHeight(36)
-        self.search_input.setObjectName("searchInput")
-        self.search_input.textChanged.connect(self._filter_certs)
-        header_row.addWidget(self.search_input, 1)
-
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.setCursor(Qt.PointingHandCursor)
-        refresh_btn.setFixedHeight(36)
-        refresh_btn.setObjectName("primaryBtn")
-        refresh_btn.clicked.connect(self.fetch_certificates)
-        header_row.addWidget(refresh_btn)
-        layout.addLayout(header_row)
-
-        # Scroll area for certificate list
-        self.certs_area = QScrollArea()
-        self.certs_area.setWidgetResizable(True)
-        self.certs_container = QWidget()
-        self.certs_layout = QVBoxLayout()
-        self.certs_layout.setSpacing(12)
-        self.certs_layout.addStretch()
-        self.certs_container.setLayout(self.certs_layout)
-        self.certs_area.setWidget(self.certs_container)
-        layout.addWidget(self.certs_area)
-
+        layout.setContentsMargins(32, 32, 32, 32)
+        layout.setSpacing(24)
+        
+        # Header
+        header_layout = QHBoxLayout()
+        
+        title = QLabel("Certificate Management")
+        title.setFont(QFont("Segoe UI", 20, QFont.Bold))
+        title.setStyleSheet("color: #F9FAFB;")
+        
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        
+        # Search and filters
+        search_layout = QHBoxLayout()
+        search_layout.setSpacing(12)
+        
+        self.certificate_search = QLineEdit()
+        self.certificate_search.setPlaceholderText("Search certificates by ID, method, or date...")
+        self.certificate_search.setFixedHeight(40)
+        self.certificate_search.setObjectName("searchInput")
+        self.certificate_search.textChanged.connect(self._filter_certificates)
+        
+        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.setFixedHeight(40)
+        self.refresh_button.setObjectName("secondaryButton")
+        self.refresh_button.setCursor(Qt.PointingHandCursor)
+        self.refresh_button.clicked.connect(self.fetch_certificates)
+        
+        search_layout.addWidget(self.certificate_search, stretch=3)
+        search_layout.addWidget(self.refresh_button)
+        
+        header_layout.addLayout(search_layout)
+        layout.addLayout(header_layout)
+        
+        # Certificates table
+        self.certificates_table = QTableWidget()
+        self.certificates_table.setObjectName("certificatesTable")
+        
+        # Configure table
+        headers = ["Certificate ID", "Date Created", "Method", "Status", "Actions"]
+        self.certificates_table.setColumnCount(len(headers))
+        self.certificates_table.setHorizontalHeaderLabels(headers)
+        
+        # Configure header
+        header = self.certificates_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents) 
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        
+        # Configure vertical header
+        v_header = self.certificates_table.verticalHeader()
+        v_header.setVisible(False)
+        
+        # Table styling
+        self.certificates_table.setAlternatingRowColors(True)
+        self.certificates_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.certificates_table.setShowGrid(False)
+        
+        layout.addWidget(self.certificates_table)
         page.setLayout(layout)
+        
         return page
-
-    def _build_verify_page(self):
+        
+    def _create_verification_page(self) -> QWidget:
+        """Create the certificate verification page."""
         page = QWidget()
         layout = QVBoxLayout()
-        layout.setSpacing(12)
-
+        layout.setContentsMargins(48, 48, 48, 48)
+        layout.setAlignment(Qt.AlignCenter)
+        
+        # Verification card
         card = QFrame()
-        card.setObjectName("card")
+        card.setObjectName("verificationCard")
+        card.setMaximumWidth(600)
+        
         card_layout = QVBoxLayout()
-        card_layout.setContentsMargins(16, 16, 16, 16)
-        card_layout.setSpacing(10)
-
-        title = QLabel("Verify")
-        title.setFont(QFont("Segoe UI", 12, QFont.DemiBold))
+        card_layout.setContentsMargins(40, 40, 40, 40)
+        card_layout.setSpacing(24)
+        
+        # Header
+        title = QLabel("Certificate Verification")
+        title.setFont(QFont("Segoe UI", 20, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color: #F9FAFB;")
+        
+        subtitle = QLabel("Verify the authenticity and integrity of sanitization certificates")
+        subtitle.setFont(QFont("Segoe UI", 12))
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet("color: #9CA3AF;")
+        subtitle.setWordWrap(True)
+        
         card_layout.addWidget(title)
-
-        subtitle = QLabel("Open the verification portal to check a certificate.")
-        subtitle.setProperty("role", "muted")
         card_layout.addWidget(subtitle)
-
-        btn = QPushButton("Open Verification Portal")
-        btn.setObjectName("primaryBtn")
-        btn.setFixedHeight(38)
-        btn.clicked.connect(lambda: webbrowser.open("https://next-frontend-nu-two.vercel.app/verify"))
-        card_layout.addWidget(btn)
-
+        
+        # Verification options
+        options_layout = QVBoxLayout()
+        options_layout.setSpacing(16)
+        
+        # Online verification
+        online_btn = QPushButton("🌐  Open Online Verification Portal")
+        online_btn.setFixedHeight(56)
+        online_btn.setObjectName("primaryButton")
+        online_btn.setCursor(Qt.PointingHandCursor)
+        online_btn.clicked.connect(self.open_verification_portal)
+        
+        # Local verification
+        local_btn = QPushButton("📄  Verify Local Certificate File")
+        local_btn.setFixedHeight(56)
+        local_btn.setObjectName("secondaryButton") 
+        local_btn.setCursor(Qt.PointingHandCursor)
+        local_btn.clicked.connect(self.verify_local_certificate)
+        
+        options_layout.addWidget(online_btn)
+        options_layout.addWidget(local_btn)
+        
+        card_layout.addLayout(options_layout)
         card.setLayout(card_layout)
-        layout.addWidget(card, alignment=Qt.AlignTop)
-        layout.addStretch()
+        layout.addWidget(card)
         page.setLayout(layout)
+        
         return page
-
-    # ---------------- styling ----------------
-    def _apply_global_styles(self):
-        # Modern, consistent visual theme. Buttons are centralized by objectName so code doesn't need inline styles.
+        
+    def _create_settings_page(self) -> QWidget:
+        """Create the application settings page."""
+        page = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(32, 32, 32, 32)
+        layout.setSpacing(24)
+        
+        # Title
+        title = QLabel("Application Settings")
+        title.setFont(QFont("Segoe UI", 20, QFont.Bold))
+        title.setStyleSheet("color: #F9FAFB;")
+        layout.addWidget(title)
+        
+        # Settings tabs
+        tabs = QTabWidget()
+        tabs.setObjectName("settingsTabs")
+        
+        # General settings
+        general_tab = self._create_general_settings_tab()
+        tabs.addTab(general_tab, "General")
+        
+        # Security settings  
+        security_tab = self._create_security_settings_tab()
+        tabs.addTab(security_tab, "Security")
+        
+        # Advanced settings
+        advanced_tab = self._create_advanced_settings_tab()
+        tabs.addTab(advanced_tab, "Advanced")
+        
+        layout.addWidget(tabs)
+        page.setLayout(layout)
+        
+        return page
+        
+    def _create_general_settings_tab(self) -> QWidget:
+        """Create general settings tab."""
+        tab = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(24, 24, 24, 24)
+        
+        # Theme settings
+        theme_group = QGroupBox("Appearance")
+        theme_layout = QFormLayout()
+        
+        theme_combo = QComboBox()
+        theme_combo.addItems(["Dark Theme", "Light Theme", "System Default"])
+        theme_layout.addRow("Theme:", theme_combo)
+        
+        theme_group.setLayout(theme_layout)
+        
+        # Notifications
+        notif_group = QGroupBox("Notifications")  
+        notif_layout = QVBoxLayout()
+        
+        notif_layout.addWidget(QCheckBox("Show operation completion notifications"))
+        notif_layout.addWidget(QCheckBox("Play sound on completion"))
+        notif_layout.addWidget(QCheckBox("Enable system tray notifications"))
+        
+        notif_group.setLayout(notif_layout)
+        
+        layout.addWidget(theme_group)
+        layout.addWidget(notif_group)
+        layout.addStretch()
+        
+        tab.setLayout(layout)
+        return tab
+        
+    def _create_security_settings_tab(self) -> QWidget:
+        """Create security settings tab."""
+        tab = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(24, 24, 24, 24)
+        
+        # Authentication settings
+        auth_group = QGroupBox("Authentication")
+        auth_layout = QFormLayout()
+        
+        timeout_spin = QSpinBox()
+        timeout_spin.setRange(5, 120)
+        timeout_spin.setValue(30)
+        timeout_spin.setSuffix(" minutes")
+        auth_layout.addRow("Session timeout:", timeout_spin)
+        
+        auth_group.setLayout(auth_layout)
+        
+        # Logging settings
+        log_group = QGroupBox("Security Logging")
+        log_layout = QVBoxLayout()
+        
+        log_layout.addWidget(QCheckBox("Log all operations"))
+        log_layout.addWidget(QCheckBox("Enable audit trail"))
+        log_layout.addWidget(QCheckBox("Require confirmation for destructive operations"))
+        
+        log_group.setLayout(log_layout)
+        
+        layout.addWidget(auth_group)
+        layout.addWidget(log_group)
+        layout.addStretch()
+        
+        tab.setLayout(layout)
+        return tab
+        
+    def _create_advanced_settings_tab(self) -> QWidget:
+        """Create advanced settings tab."""
+        tab = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(24, 24, 24, 24)
+        
+        # Performance settings
+        perf_group = QGroupBox("Performance")
+        perf_layout = QFormLayout()
+        
+        threads_spin = QSpinBox()
+        threads_spin.setRange(1, 16)
+        threads_spin.setValue(4)
+        perf_layout.addRow("Worker threads:", threads_spin)
+        
+        buffer_spin = QSpinBox()
+        buffer_spin.setRange(1, 64)
+        buffer_spin.setValue(8)
+        buffer_spin.setSuffix(" MB")
+        perf_layout.addRow("Buffer size:", buffer_spin)
+        
+        perf_group.setLayout(perf_layout)
+        
+        # Debug settings
+        debug_group = QGroupBox("Debug")
+        debug_layout = QVBoxLayout()
+        
+        debug_layout.addWidget(QCheckBox("Enable debug logging"))
+        debug_layout.addWidget(QCheckBox("Show detailed error messages"))
+        
+        debug_group.setLayout(debug_layout)
+        
+        layout.addWidget(perf_group)
+        layout.addWidget(debug_group)
+        layout.addStretch()
+        
+        tab.setLayout(layout)
+        return tab
+        
+    def _apply_enterprise_theme(self):
+        """Apply professional enterprise theme."""
         self.setStyleSheet("""
-            /* App background and base text */
-            QWidget { background: #071025; font-family: "Segoe UI", Arial, sans-serif; color: #e6eef8; }
-           
-            /* Generic card */
-            QFrame#card {
-                background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #0b2236, stop:1 #071025);
-                border-radius: 10px;
-                border: 1px solid rgba(255,255,255,0.04);
+            /* Main Application */
+            QWidget {
+                background-color: #111827;
+                color: #F9FAFB;
+                font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
             }
-
-            /* Certificate card specifically */
-            QFrame#certCard, QFrame[objectName="card"] {
-                background: #071025;
-                border-radius: 10px;
-                border: 1px solid rgba(255,255,255,0.04);
-                padding: 12px;
+            
+            /* Header */
+            QFrame#header {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1F2937, stop:1 #111827);
+                border-bottom: 1px solid #374151;
             }
-
-            /* Labels */
-            QLabel { color: #dbe9f7; }
-            QLabel[role="muted"] { color: #9fb0c8; font-size: 12px; }
-
-            /* Inputs */
-            QLineEdit#searchInput {
-                background: #0b2a44;
-                border: 1px solid #133a56;
-                border-radius: 8px;
-                padding: 6px 10px;
-                color: #e6eef8;
+            
+            /* Sidebar */
+            QFrame#sidebar {
+                background-color: #1F2937;
+                border-right: 1px solid #374151;
             }
-            QLineEdit, QComboBox {
-                background: #071a2d;
-                border: 1px solid #133a56;
-                border-radius: 8px;
-                padding-left: 8px;
-                padding-right: 8px;
-                color: #e6eef8;
-                min-height: 34px;
-            }
-
-            /* Nav buttons */
-            QPushButton#navBtn {
+            
+            /* Navigation Buttons */
+            QPushButton#navButton {
                 background: transparent;
-                color: #9fb0c8;
-                padding: 6px 12px;
-                border-radius: 8px;
+                color: #D1D5DB;
                 border: none;
+                border-radius: 8px;
+                padding: 12px 16px;
+                text-align: left;
+                font-weight: 500;
+                font-size: 13px;
+            }
+            
+            QPushButton#navButton:hover {
+                background-color: #374151;
+                color: #F9FAFB;
+            }
+            
+            QPushButton#navButton:pressed,
+            QPushButton#navButton[active="true"] {
+                background-color: #3B82F6;
+                color: white;
+            }
+            
+            /* Form Inputs */
+            QLineEdit#formInput, QLineEdit#searchInput {
+                background-color: #374151;
+                border: 1px solid #4B5563;
+                border-radius: 6px;
+                padding: 8px 12px;
+                color: #F9FAFB;
+                font-size: 14px;
+            }
+            
+            QLineEdit#formInput:focus, QLineEdit#searchInput:focus {
+                border-color: #3B82F6;
+                outline: none;
+            }
+            
+            QComboBox#formCombo {
+                background-color: #374151;
+                border: 1px solid #4B5563;
+                border-radius: 6px;
+                padding: 8px 12px;
+                color: #F9FAFB;
+            }
+            
+            QComboBox#formCombo::drop-down {
+                border: none;
+                width: 20px;
+            }
+            
+            QComboBox#formCombo::down-arrow {
+                image: none;
+                border: none;
+            }
+            
+            /* Buttons */
+            QPushButton#primaryButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3B82F6, stop:1 #2563EB);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 14px;
+                padding: 12px 24px;
+            }
+            
+            QPushButton#primaryButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2563EB, stop:1 #1D4ED8);
+            }
+            
+            QPushButton#primaryButton:pressed {
+                background: #1D4ED8;
+            }
+            
+            QPushButton#primaryButton:disabled {
+                background: #4B5563;
+                color: #9CA3AF;
+            }
+            
+            QPushButton#secondaryButton {
+                background: transparent;
+                color: #3B82F6;
+                border: 1px solid #3B82F6;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 14px;
+                padding: 10px 20px;
+            }
+            
+            QPushButton#secondaryButton:hover {
+                background: #3B82F6;
+                color: white;
+            }
+            
+            QPushButton#successButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #059669, stop:1 #047857);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 14px;
+                padding: 12px 24px;
+            }
+            
+            QPushButton#successButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #047857, stop:1 #065F46);
+            }
+            
+            QPushButton#successButton:disabled {
+                background: #4B5563;
+                color: #9CA3AF;
+            }
+            
+            QPushButton#dangerButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #DC2626, stop:1 #B91C1C);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 14px;
+                padding: 12px 24px;
+            }
+            
+            QPushButton#dangerButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #B91C1C, stop:1 #991B1B);
+            }
+            
+            QPushButton#dangerButton:disabled {
+                background: #4B5563;
+                color: #9CA3AF;
+            }
+            
+            /* Cards */
+            QFrame#loginCard, QFrame#verificationCard, QFrame#configPanel, QFrame#progressPanel {
+                background-color: #1F2937;
+                border: 1px solid #374151;
+                border-radius: 12px;
+            }
+            
+            /* Progress Bar */
+            QProgressBar#progressBar {
+                background-color: #374151;
+                border: 1px solid #4B5563;
+                border-radius: 12px;
+                text-align: center;
+                color: #F9FAFB;
                 font-weight: 600;
             }
-            QPushButton#navBtn[active="true"] {
-                color: #e6eef8;
-                background: rgba(14,165,233,0.12);
+            
+            QProgressBar#progressBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #3B82F6, stop:1 #8B5CF6);
+                border-radius: 11px;
             }
-
-            /* Primary button (blue) */
-            QPushButton#primaryBtn {
-                background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #0ea5e9, stop:1 #0284c7);
+            
+            /* Text Edit */
+            QTextEdit#activityLog {
+                background-color: #111827;
+                border: 1px solid #374151;
+                border-radius: 8px;
+                color: #E5E7EB;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 11px;
+                padding: 8px;
+            }
+            
+            /* Table */
+            QTableWidget#certificatesTable {
+                background-color: #1F2937;
+                border: 1px solid #374151;
+                border-radius: 8px;
+                gridline-color: #374151;
+                color: #F9FAFB;
+            }
+            
+            QTableWidget#certificatesTable::item {
+                padding: 8px;
+                border-bottom: 1px solid #374151;
+            }
+            
+            QTableWidget#certificatesTable::item:selected {
+                background-color: #3B82F6;
                 color: white;
-                border-radius: 8px;
-                padding: 8px 14px;
-                font-weight: 700;
-                min-height: 36px;
             }
-
-            /* Success button (green) */
-            QPushButton#successBtn {
-                background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #10b981, stop:1 #059669);
+            
+            QTableWidget#certificatesTable::item:alternate {
+                background-color: #111827;
+            }
+            
+            QHeaderView::section {
+                background-color: #374151;
+                color: #F9FAFB;
+                padding: 8px;
+                border: none;
+                border-right: 1px solid #4B5563;
+                font-weight: 600;
+            }
+            
+            /* Group Boxes */
+            QGroupBox {
+                color: #F9FAFB;
+                border: 1px solid #374151;
+                border-radius: 8px;
+                margin-top: 8px;
+                font-weight: 600;
+            }
+            
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 8px 0 8px;
+                color: #3B82F6;
+            }
+            
+            QGroupBox#systemInfo {
+                background-color: #1F2937;
+            }
+            
+            /* Tabs */
+            QTabWidget#settingsTabs::pane {
+                border: 1px solid #374151;
+                border-radius: 8px;
+                background-color: #1F2937;
+            }
+            
+            QTabWidget#settingsTabs::tab-bar {
+                alignment: left;
+            }
+            
+            QTabBar::tab {
+                background-color: #374151;
+                color: #D1D5DB;
+                padding: 8px 16px;
+                margin-right: 2px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            
+            QTabBar::tab:selected {
+                background-color: #3B82F6;
                 color: white;
-                border-radius: 8px;
-                padding: 8px 14px;
-                font-weight: 700;
-                min-height: 36px;
             }
-
-            /* Danger button (red) */
-            QPushButton#dangerBtn {
-                background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #ff6b6b, stop:1 #f43f5e);
-                color: white;
-                border-radius: 8px;
-                padding: 8px 14px;
-                font-weight: 700;
-                min-height: 36px;
+            
+            QTabBar::tab:hover {
+                background-color: #4B5563;
+                color: #F9FAFB;
             }
-
-            /* Ghost / subtle button */
-            QPushButton#ghostBtn {
-                background: transparent;
-                border: 1px solid rgba(255,255,255,0.04);
-                color: #cfe6fb;
-                border-radius: 8px;
-                padding: 6px 12px;
-                min-height: 36px;
+            
+            /* Checkboxes */
+            QCheckBox {
+                color: #F9FAFB;
+                spacing: 8px;
             }
-
-            /* Download specialized button */
-            QPushButton#downloadBtn {
-                background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #2563eb, stop:1 #1d4ed8);
-                color: white;
-                border-radius: 8px;
-                padding: 6px 12px;
-                min-height: 34px;
+            
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 2px solid #4B5563;
+                border-radius: 3px;
+                background-color: #374151;
             }
-
-            /* Progress bar */
-            QProgressBar { background: #072033; border-radius: 8px; height: 14px; border: 1px solid #133a56; }
-            QProgressBar::chunk { border-radius: 8px; background-color: #0ea5e9; }
-
-            /* Scroll area tweaks */
-            QScrollArea { border: none; }
+            
+            QCheckBox::indicator:checked {
+                background-color: #3B82F6;
+                border-color: #3B82F6;
+            }
+            
+            /* Spin boxes */
+            QSpinBox {
+                background-color: #374151;
+                border: 1px solid #4B5563;
+                border-radius: 4px;
+                padding: 4px 8px;
+                color: #F9FAFB;
+            }
+            
+            /* Scroll bars */
+            QScrollBar:vertical {
+                background-color: #1F2937;
+                width: 12px;
+                border-radius: 6px;
+            }
+            
+            QScrollBar::handle:vertical {
+                background-color: #4B5563;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            
+            QScrollBar::handle:vertical:hover {
+                background-color: #6B7280;
+            }
         """)
-        p = self.palette()
-        p.setColor(QPalette.Window, QColor("#071025"))
-        self.setPalette(p)
-
-    # ---------------- navigation ----------------
-    def switch_page(self, idx: int):
-        self.stack.setCurrentIndex(idx)
-        # simple nav highlight (bold the active nav button)
-        for btn, i in (
-            (self.btn_login_nav, 0),
-            (self.btn_wipe_nav, 1),
-            (self.btn_certs_nav, 2),
-            (self.btn_verify_nav, 3),
-        ):
-            if i == idx:
-                btn.setProperty("active", True)
-                btn.setProperty("active", "true")
-                btn.setStyleSheet("")
-            else:
-                btn.setProperty("active", False)
-                btn.setProperty("active", "false")
-                btn.setStyleSheet("")
-
-        # when navigating to certs, fetch automatically
-        if idx == 2:
-            self.fetch_certificates()
-
-    # ---------------- actions ----------------
-    def login(self):
-        user = self.username.text().strip()
-        pwd = self.password.text().strip()
-        if not user or not pwd:
-            QMessageBox.warning(self, "Missing fields", "Please enter email and password.")
-            return
         
-        success, result = self.api_client.login(user, pwd)
-        if success:
-            # update simple status indicator
-            self.status_dot.setStyleSheet("border-radius:6px; background:#10b981;")
-            self.status_text.setText("Signed in")
-            self.select_btn.setEnabled(True)
-            # auto-navigate to Wipe page after login
-            self.switch_page(1)
-        else:
-            QMessageBox.warning(self, "Login Failed", result)
-
-    def select_and_wipe(self):
-        if not self.api_client.jwt_token:
-            QMessageBox.warning(self, "Not signed in", "Please sign in before starting a wipe.")
+        # Set application palette
+        palette = self.palette()
+        palette.setColor(QPalette.Window, QColor("#111827"))
+        palette.setColor(QPalette.WindowText, QColor("#F9FAFB"))
+        palette.setColor(QPalette.Base, QColor("#1F2937"))
+        palette.setColor(QPalette.AlternateBase, QColor("#111827"))
+        palette.setColor(QPalette.Text, QColor("#F9FAFB"))
+        self.setPalette(palette)
+        
+    def _setup_keyboard_shortcuts(self):
+        """Setup keyboard shortcuts for better UX."""
+        from PySide6.QtGui import QKeySequence, QShortcut
+        
+        # Navigation shortcuts
+        shortcuts = [
+            (QKeySequence("Ctrl+1"), lambda: self.switch_page(0)),
+            (QKeySequence("Ctrl+2"), lambda: self.switch_page(1)),
+            (QKeySequence("Ctrl+3"), lambda: self.switch_page(2)),
+            (QKeySequence("Ctrl+4"), lambda: self.switch_page(3)),
+            (QKeySequence("Ctrl+5"), lambda: self.switch_page(4)),
+            (QKeySequence("Ctrl+R"), self.fetch_certificates),
+            (QKeySequence("Ctrl+Q"), self.close),
+            (QKeySequence("F5"), self.fetch_certificates),
+        ]
+        
+        for key_sequence, callback in shortcuts:
+            shortcut = QShortcut(key_sequence, self)
+            shortcut.activated.connect(callback)
+            
+    def switch_page(self, page_index: int):
+        """Switch between application pages with visual feedback."""
+        self.content_stack.setCurrentIndex(page_index)
+        
+        # Update navigation button states
+        for i, btn in enumerate(self.nav_buttons):
+            if i == page_index:
+                btn.setProperty("active", "true")
+            else:
+                btn.setProperty("active", "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            
+        # Auto-fetch certificates when navigating to certificates page
+        if page_index == 2 and self.is_authenticated:
+            self.fetch_certificates()
+            
+    def _update_status(self, message: str, status_type: str = "info"):
+        """Update status bar with message and optional toast notification."""
+        if self.status_bar:
+            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+            self.status_bar.showMessage(f"[{timestamp}] {message}")
+            
+        # Add to activity log if wipe page is active
+        if hasattr(self, 'activity_log'):
+            log_entry = f"[{timestamp}] {message}\n"
+            self.activity_log.append(log_entry.rstrip())
+            
+    def authenticate_user(self):
+        """Handle user authentication with comprehensive validation."""
+        email = self.email_input.text().strip()
+        password = self.password_input.text().strip()
+        
+        # Input validation
+        if not email or not password:
+            QMessageBox.warning(
+                self, 
+                "Incomplete Information", 
+                "Please enter both email and password."
+            )
             return
-
+            
+        if "@" not in email or "." not in email.split("@")[-1]:
+            QMessageBox.warning(
+                self, 
+                "Invalid Email", 
+                "Please enter a valid email address."
+            )
+            return
+            
+        # Show loading state
+        self.login_button.setText("Authenticating...")
+        self.login_button.setEnabled(False)
+        self.loading_spinner.start()
+        self.loading_spinner.show()
+        
+        # Perform authentication
+        success, result = self.api_client.login(email, password)
+        
+        # Hide loading state
+        self.loading_spinner.stop()
+        self.loading_spinner.hide()
+        self.login_button.setText("Sign In")
+        self.login_button.setEnabled(True)
+        
+        if success:
+            self.is_authenticated = True
+            self.status_indicator.set_status("online")
+            self.user_status_label.setText(f"Connected as {email}")
+            self.select_target_button.setEnabled(True)
+            
+            self._update_status("Authentication successful", "success")
+            
+            # Navigate to wipe page
+            self.switch_page(1)
+            
+        else:
+            QMessageBox.critical(
+                self,
+                "Authentication Failed",
+                f"Unable to authenticate: {result}\n\nPlease check your credentials and try again."
+            )
+            self._update_status("Authentication failed", "error")
+            
+    def initiate_wipe_process(self):
+        """Initiate the secure wipe process with comprehensive drive selection."""
+        if not self.is_authenticated:
+            QMessageBox.warning(
+                self, 
+                "Authentication Required", 
+                "Please authenticate before starting a wipe operation."
+            )
+            return
+            
         # Get available drives
         drives = list_drives()
-       
+        
         if not drives or (len(drives) == 1 and 'error' in drives[0]):
-            QMessageBox.critical(self, "Error", "Cannot retrieve drive list. Make sure you have proper permissions.")
+            QMessageBox.critical(
+                self, 
+                "System Error", 
+                "Cannot retrieve drive information. Please ensure you have administrator privileges and try again."
+            )
             return
-
-        # Create drive selection dialog
+            
+        # Create enhanced drive selection dialog
+        dialog = self._create_drive_selection_dialog(drives)
+        
+        if dialog.exec() == QDialog.Accepted:
+            selected_path = getattr(dialog, 'selected_path', None)
+            if selected_path:
+                self.execute_wipe_operation(selected_path)
+                
+    def _create_drive_selection_dialog(self, drives: List[Dict[str, Any]]) -> QDialog:
+        """Create professional drive selection dialog."""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Select Drive to Wipe")
+        dialog.setWindowTitle("Select Target for Secure Wipe")
         dialog.setModal(True)
-        dialog.resize(740, 520)
-
+        dialog.resize(800, 600)
+        dialog.setObjectName("driveSelectionDialog")
+        
         layout = QVBoxLayout()
-
-        # Warning message
-        warning = QLabel("⚠️ WARNING: This will permanently destroy all data on the selected drive!")
-        warning.setStyleSheet("color: #ffb4b4; font-weight: 700; padding: 10px; background: rgba(244,63,94,0.06); border-radius: 8px;")
-        layout.addWidget(warning)
-
-        # Drive list
-        drive_list = QListWidget()
-        drive_list.setStyleSheet("background: #071025; border: 1px solid #133a56; border-radius: 8px;")
-       
+        layout.setSpacing(16)
+        
+        # Warning banner
+        warning_frame = QFrame()
+        warning_frame.setObjectName("warningBanner")
+        warning_frame.setStyleSheet("""
+            QFrame#warningBanner {
+                background-color: #FEF3C7;
+                border: 1px solid #F59E0B;
+                border-radius: 8px;
+                padding: 12px;
+            }
+        """)
+        
+        warning_layout = QHBoxLayout()
+        warning_icon = QLabel("⚠️")
+        warning_icon.setFont(QFont("Segoe UI", 16))
+        
+        warning_text = QLabel(
+            "<b>CRITICAL WARNING</b><br>"
+            "This operation will permanently destroy ALL data on the selected target. "
+            "This action cannot be undone. Ensure you have proper authorization and backups."
+        )
+        warning_text.setStyleSheet("color: #92400E; font-weight: 500;")
+        warning_text.setWordWrap(True)
+        
+        warning_layout.addWidget(warning_icon)
+        warning_layout.addWidget(warning_text)
+        warning_frame.setLayout(warning_layout)
+        layout.addWidget(warning_frame)
+        
+        # Drive selection table
+        drive_table = QTableWidget()
+        drive_table.setColumnCount(6)
+        drive_table.setHorizontalHeaderLabels([
+            "Device", "Size", "Type", "Model", "Serial", "Mount Point"
+        ])
+        
+        # Populate table
+        valid_drives = []
         for drive in drives:
             if 'error' in drive:
                 continue
-               
-            # Skip mounted system drives for safety
-            if drive.get('mountpoint') in ['/', '/boot', '/home', '/usr', '/var']:
+                
+            # Filter out system-critical mount points
+            if drive.get('mountpoint') in ['/', '/boot', '/home', '/usr', '/var', '/etc']:
                 continue
-               
-            item_text = f"{drive['name']} - {drive['size']} - {drive['model']} ({drive['type']})"
-            if drive.get('mountpoint'):
-                item_text += f" [MOUNTED: {drive['mountpoint']}]"
-               
-            item = QListWidgetItem(item_text)
-            item.setData(Qt.UserRole, drive['name'])
-            drive_list.addItem(item)
-
-        layout.addWidget(QLabel("Available drives:"))
-        layout.addWidget(drive_list)
-
-        # Option to select file/folder instead
-        file_folder_btn = QPushButton("Select File/Folder Instead")
-        file_folder_btn.setObjectName("primaryBtn")
-        file_folder_btn.setFixedHeight(36)
-        layout.addWidget(file_folder_btn)
-
-        # Buttons
+                
+            valid_drives.append(drive)
+            
+        drive_table.setRowCount(len(valid_drives))
+        
+        for row, drive in enumerate(valid_drives):
+            items = [
+                drive.get('name', ''),
+                drive.get('size', ''),
+                drive.get('type', ''),
+                drive.get('model', ''),
+                drive.get('serial', ''),
+                drive.get('mountpoint', 'Not mounted')
+            ]
+            
+            for col, item_text in enumerate(items):
+                item = QTableWidgetItem(str(item_text))
+                item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+                if col == 0:  # Store full drive info in first column
+                    item.setData(Qt.UserRole, drive)
+                drive_table.setItem(row, col, item)
+                
+        # Configure table
+        header = drive_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        for i in range(5):
+            header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+            
+        drive_table.setSelectionBehavior(QTableWidget.SelectRows)
+        drive_table.setAlternatingRowColors(True)
+        
+        layout.addWidget(QLabel("Available targets:"))
+        layout.addWidget(drive_table)
+        
+        # Alternative selection
+        alt_layout = QHBoxLayout()
+        file_btn = QPushButton("Select File/Folder Instead")
+        file_btn.setObjectName("secondaryButton")
+        file_btn.clicked.connect(lambda: self._select_file_target(dialog))
+        alt_layout.addWidget(file_btn)
+        alt_layout.addStretch()
+        layout.addLayout(alt_layout)
+        
+        # Dialog buttons
         button_layout = QHBoxLayout()
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setObjectName("ghostBtn")
-        cancel_btn.setFixedHeight(36)
-        wipe_btn = QPushButton("Wipe Selected")
-        wipe_btn.setObjectName("dangerBtn")
-        wipe_btn.setFixedHeight(36)
-
         button_layout.addStretch()
-        button_layout.addWidget(cancel_btn)
-        button_layout.addWidget(wipe_btn)
-        layout.addLayout(button_layout)
-
-        dialog.setLayout(layout)
-
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("secondaryButton")
         cancel_btn.clicked.connect(dialog.reject)
-
-        def on_file_folder_select():
-            dialog.accept()
-            path = QFileDialog.getExistingDirectory(self, "Select Folder to Wipe")
-            if path:
-                self.perform_wipe(path)
-
-        def on_wipe():
-            current_item = drive_list.currentItem()
-            if not current_item:
-                QMessageBox.warning(dialog, "No Selection", "Please select a drive to wipe.")
-                return
-               
-            drive_path = current_item.data(Qt.UserRole)
-           
-            # Final confirmation
+        
+        proceed_btn = QPushButton("Proceed with Wipe")
+        proceed_btn.setObjectName("dangerButton")
+        proceed_btn.setEnabled(False)
+        
+        def on_selection_changed():
+            proceed_btn.setEnabled(len(drive_table.selectedItems()) > 0)
+            
+        drive_table.itemSelectionChanged.connect(on_selection_changed)
+        
+        def on_proceed():
+            selected_items = drive_table.selectedItems()
+            if selected_items:
+                drive_data = selected_items[0].data(Qt.UserRole)
+                if drive_data:
+                    reply = QMessageBox.question(
+                        dialog,
+                        "Final Confirmation",
+                        f"Are you absolutely certain you want to wipe {drive_data['name']}?\n\n"
+                        f"Size: {drive_data.get('size', 'Unknown')}\n"
+                        f"Model: {drive_data.get('model', 'Unknown')}\n\n"
+                        "This action CANNOT be undone!",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No
+                    )
+                    
+                    if reply == QMessageBox.Yes:
+                        dialog.selected_path = drive_data['name']
+                        dialog.accept()
+                        
+        proceed_btn.clicked.connect(on_proceed)
+        
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(proceed_btn)
+        layout.addLayout(button_layout)
+        
+        dialog.setLayout(layout)
+        return dialog
+        
+    def _select_file_target(self, dialog: QDialog):
+        """Handle file/folder target selection."""
+        target_path = QFileDialog.getExistingDirectory(
+            dialog, 
+            "Select Folder to Securely Delete"
+        )
+        
+        if target_path:
             reply = QMessageBox.question(
                 dialog,
-                "Final Confirmation",
-                f"Are you absolutely sure you want to wipe {drive_path}?\n\nThis action cannot be undone!",
+                "Confirm File/Folder Wipe",
+                f"Securely delete: {target_path}\n\nThis action cannot be undone!",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No
             )
-           
+            
             if reply == QMessageBox.Yes:
+                dialog.selected_path = target_path
                 dialog.accept()
-                self.perform_wipe(drive_path)
-
-        file_folder_btn.clicked.connect(on_file_folder_select)
-        wipe_btn.clicked.connect(on_wipe)
-
-        dialog.exec()
-
-    def perform_wipe(self, path):
-        """Perform the actual wiping process"""
-        method = self.method_box.currentText()
-        policy = self.policy_box.currentText()
-
+                
+    def execute_wipe_operation(self, target_path: str):
+        """Execute the secure wipe operation with progress tracking."""
+        method = self.method_combo.currentText()
+        security_level = self.security_combo.currentText()
+        
+        self._update_status(f"Initiating secure wipe of {target_path}", "processing")
+        
+        # Update UI state
+        self.select_target_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Preparing secure wipe operation...")
+        
+        # Start progress animation
+        self.progress_timer.start()
+        
         try:
-            capacity_gb = int(self.capacity_input.text().strip()) if self.capacity_input.text().strip() else 0
-        except ValueError:
-            capacity_gb = 0
-
-        result = "failed"
-        server_success = False
-        server_message = "Not attempted"
-
-        # start progress animation
-        self.progress.setValue(5)
-        self._progress_timer.start()
-
-        try:
-            # Call secure_delete with server credentials
-            wipe_result = secure_delete(path, self.api_client.api_base, self.api_client.jwt_token)
-           
-            if isinstance(wipe_result, tuple):
-                # Device wiping with server transmission
-                sanitization_success, server_success, server_message = wipe_result
-                if sanitization_success:
-                    result = "passed"
+            # Execute wipe operation
+            result = secure_delete(
+                target_path, 
+                self.api_client.api_base, 
+                self.api_client.jwt_token
+            )
+            
+            # Stop progress timer
+            self.progress_timer.stop()
+            self.progress_bar.setValue(100)
+            
+            # Process results
+            if isinstance(result, tuple):
+                sanitization_success, server_success, server_message = result
+                self._handle_wipe_completion(
+                    sanitization_success, server_success, server_message, target_path
+                )
+            elif result:
+                self._handle_wipe_completion(True, False, "No server sync", target_path)
             else:
-                # File/folder wiping (boolean result)
-                if wipe_result:
-                    result = "passed"
-                   
+                self._handle_wipe_completion(False, False, "Operation failed", target_path)
+                
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Wipe failed: {str(e)}")
-            result = "failed"
-
-        # stop animation quickly and set to complete
-        self._progress_timer.stop()
-        self.progress.setValue(100)
-
-        # Display results based on wipe status and server communication
-        if result == "passed":
+            self.progress_timer.stop()
+            self._handle_wipe_error(str(e), target_path)
+            
+        finally:
+            # Reset UI state
+            self.select_target_button.setEnabled(True)
+            self.cancel_button.setEnabled(False)
+            QTimer.singleShot(2000, lambda: self.progress_bar.setValue(0))
+            
+    def _handle_wipe_completion(self, sanitization_success: bool, server_success: bool, 
+                               server_message: str, target_path: str):
+        """Handle wipe operation completion."""
+        if sanitization_success:
             if server_success:
-                QMessageBox.information(self, "Success",
-                    f"Wipe completed successfully\n"
-                    f"• Audit logs and certificate sent to server")
+                QMessageBox.information(
+                    self,
+                    "Operation Completed Successfully",
+                    f"Secure wipe of {target_path} completed successfully.\n\n"
+                    "• Data sanitization: COMPLETED\n"
+                    "• Certificate generation: COMPLETED\n"
+                    "• Server synchronization: COMPLETED"
+                )
+                self._update_status("Wipe operation completed successfully", "success")
             else:
-                QMessageBox.information(self, "Partial Success",
-                    f"Wipe completed successfully\n"
-                    f"• Server communication failed: {server_message}")
+                QMessageBox.information(
+                    self,
+                    "Operation Partially Completed", 
+                    f"Secure wipe of {target_path} completed successfully.\n\n"
+                    f"• Data sanitization: COMPLETED\n"
+                    f"• Server synchronization: FAILED ({server_message})\n\n"
+                    "The data has been securely wiped, but certificate upload failed."
+                )
+                self._update_status("Wipe completed, server sync failed", "warning")
         else:
-            QMessageBox.critical(self, "Wipe Failed",
-                "The wiping process failed. Check logs for details.")
-
-        # reset progress slowly
-        QTimer.singleShot(600, lambda: self.progress.setValue(0))
-
+            self._handle_wipe_error("Sanitization process failed", target_path)
+            
+    def _handle_wipe_error(self, error_message: str, target_path: str):
+        """Handle wipe operation errors."""
+        QMessageBox.critical(
+            self,
+            "Operation Failed",
+            f"Secure wipe of {target_path} failed.\n\n"
+            f"Error: {error_message}\n\n"
+            "Please check the activity log for detailed information and try again."
+        )
+        self._update_status(f"Wipe operation failed: {error_message}", "error")
+        
+    def cancel_wipe_process(self):
+        """Cancel ongoing wipe process."""
+        reply = QMessageBox.question(
+            self,
+            "Cancel Operation",
+            "Are you sure you want to cancel the ongoing wipe operation?\n\n"
+            "Canceling may leave the target in an inconsistent state.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Stop timers and reset UI
+            self.progress_timer.stop()
+            self.progress_bar.setValue(0)
+            self.progress_label.setText("Operation canceled by user")
+            self.select_target_button.setEnabled(True)
+            self.cancel_button.setEnabled(False)
+            self._update_status("Wipe operation canceled", "warning")
+            
     def _advance_progress(self):
-        v = self.progress.value()
-        if v < 95:
-            self.progress.setValue(v + 2)
-        else:
-            self.progress.setValue(95)
-
-    # ---------------- certificates fetch & render ----------------
+        """Advance progress bar during operations."""
+        current = self.progress_bar.value()
+        if current < 90:
+            self.progress_bar.setValue(current + 1)
+            
     def fetch_certificates(self):
-        if not self.api_client.jwt_token:
-            QMessageBox.warning(self, "Not signed in", "Please sign in to fetch certificates.")
+        """Fetch certificates from server with enhanced error handling."""
+        if not self.is_authenticated:
+            QMessageBox.warning(
+                self, 
+                "Authentication Required", 
+                "Please authenticate before accessing certificates."
+            )
             return
-
+            
+        self._update_status("Fetching certificates from server...", "processing")
+        
+        # Show loading state
+        self.refresh_button.setText("Loading...")
+        self.refresh_button.setEnabled(False)
+        
         success, result = self.api_client.fetch_certificates()
+        
+        # Hide loading state
+        self.refresh_button.setText("Refresh")
+        self.refresh_button.setEnabled(True)
+        
         if success:
-            self.all_certs = result
-            self._render_certificates(result)
+            self.all_certificates = result
+            self._populate_certificates_table(result)
+            self._update_status(f"Loaded {len(result)} certificates", "success")
         else:
-            QMessageBox.warning(self, "Server Error", result)
-
-    def _render_certificates(self, certs):
-        # clear old items
-        for i in reversed(range(self.certs_layout.count())):
-            item = self.certs_layout.itemAt(i)
-            widget = item.widget()
-            if widget:
-                widget.setParent(None)
-
-        if not certs:
-            lbl = QLabel("No certificates found.")
-            lbl.setStyleSheet("color: #9fb0c8; font-size: 13px;")
-            self.certs_layout.addWidget(lbl)
-            self.certs_layout.addStretch()
-            return
-
-        def _fmt(ts):
-            if not ts:
-                return "—"
-            try:
-                return datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M:%S")
-            except Exception:
-                return str(ts)
-
-        for c in certs:
-            card = QFrame()
-            card.setObjectName("certCard")
-            card.setStyleSheet("")
-            gl = QGridLayout()
-            gl.setSpacing(8)
-
-            payload = c.get("payload") or {}
-            cert_num = c.get("certificateId") or payload.get("certificate_id", "—")
-            session_id = payload.get("session_id", "—")
-            nist_std = payload.get("nist_standard", "—")
-            start_time = payload.get("start_time")
-            method = payload.get("method", "—")
-            disposition = payload.get("disposition", "—")
-
-            # Certificate ID
-            label_id = QLabel("<b>Certificate ID:</b>")
-            label_id.setProperty("role", "muted")
-            gl.addWidget(label_id, 0, 0)
-            cid_lbl = QLabel(cert_num)
-            cid_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            cid_lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
-            gl.addWidget(cid_lbl, 0, 1)
-
-            # Session ID
-            gl.addWidget(QLabel("<b>Session ID:</b>"), 1, 0)
-            gl.addWidget(QLabel(session_id), 1, 1)
-
-            # NIST standard
-            gl.addWidget(QLabel("<b>NIST Standard:</b>"), 2, 0)
-            gl.addWidget(QLabel(nist_std), 2, 1)
-
-            # Start time
-            gl.addWidget(QLabel("<b>Start Time:</b>"), 3, 0)
-            gl.addWidget(QLabel(_fmt(start_time)), 3, 1)
-
-            # Method
-            gl.addWidget(QLabel("<b>Method:</b>"), 4, 0)
-            gl.addWidget(QLabel(method), 4, 1)
-
-            # Disposition
-            gl.addWidget(QLabel("<b>Disposition:</b>"), 5, 0)
-            disp_lbl = QLabel(disposition)
-            disp_lbl.setWordWrap(True)
-            gl.addWidget(disp_lbl, 5, 1)
-
-            # Download button
-            download_btn = QPushButton("Download PDF")
+            QMessageBox.critical(
+                self,
+                "Server Error",
+                f"Failed to fetch certificates from server:\n\n{result}"
+            )
+            self._update_status("Failed to fetch certificates", "error")
+            
+    def _populate_certificates_table(self, certificates: List[Dict[str, Any]]):
+        """Populate the certificates table with data."""
+        self.certificates_table.setRowCount(len(certificates))
+        
+        for row, cert in enumerate(certificates):
+            payload = cert.get("payload", {})
+            cert_id = cert.get("certificateId", payload.get("certificate_id", "Unknown"))
+            
+            # Format date
+            start_time = payload.get("start_time", "")
+            formatted_date = self._format_timestamp(start_time)
+            
+            # Extract method and status
+            method = payload.get("method", "Unknown")
+            status = payload.get("final_status", "Unknown")
+            
+            # Create table items
+            items = [
+                QTableWidgetItem(str(cert_id)),
+                QTableWidgetItem(formatted_date),
+                QTableWidgetItem(method),
+                QTableWidgetItem(status),
+            ]
+            
+            # Set item properties
+            for col, item in enumerate(items):
+                item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+                if col == 0:  # Store full certificate data in first column
+                    item.setData(Qt.UserRole, cert)
+                self.certificates_table.setItem(row, col, item)
+                
+            # Create action button
+            action_widget = QWidget()
+            action_layout = QHBoxLayout()
+            action_layout.setContentsMargins(8, 4, 8, 4)
+            action_layout.setSpacing(4)
+            
+            download_btn = QPushButton("Download")
+            download_btn.setObjectName("secondaryButton")
+            download_btn.setFixedHeight(28)
             download_btn.setCursor(Qt.PointingHandCursor)
-            download_btn.setFixedHeight(34)
-            download_btn.setObjectName("downloadBtn")
-            download_btn.clicked.connect(lambda _, cid=cert_num: self.download_certificate(cid))
-
-            btn_row = QHBoxLayout()
-            btn_row.addStretch()
-            btn_row.addWidget(download_btn)
-            gl.addLayout(btn_row, 6, 0, 1, 2)
-
-            card.setLayout(gl)
-            self.certs_layout.addWidget(card)
-
-        self.certs_layout.addStretch()
-
-    def download_certificate(self, cert_id: str):
-        """Download certificate PDF from API and prompt user to save it locally."""
-        if not cert_id or cert_id == "—":
-            QMessageBox.warning(self, "Invalid Certificate", "Certificate ID not available for download.")
+            download_btn.clicked.connect(
+                lambda checked, cid=cert_id: self.download_certificate(cid)
+            )
+            
+            view_btn = QPushButton("View")
+            view_btn.setObjectName("primaryButton")
+            view_btn.setFixedHeight(28)
+            view_btn.setCursor(Qt.PointingHandCursor)
+            view_btn.clicked.connect(
+                lambda checked, c=cert: self._view_certificate_details(c)
+            )
+            
+            action_layout.addWidget(view_btn)
+            action_layout.addWidget(download_btn)
+            action_widget.setLayout(action_layout)
+            
+            self.certificates_table.setCellWidget(row, 4, action_widget)
+            
+    def _format_timestamp(self, timestamp_str: str) -> str:
+        """Format timestamp for display."""
+        if not timestamp_str:
+            return "Unknown"
+            
+        try:
+            # Parse ISO format timestamp
+            dt = datetime.datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return str(timestamp_str)
+            
+    def _view_certificate_details(self, certificate: Dict[str, Any]):
+        """Show detailed certificate information in a dialog."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Certificate Details")
+        dialog.setModal(True)
+        dialog.resize(600, 500)
+        dialog.setObjectName("certificateDetailsDialog")
+        
+        layout = QVBoxLayout()
+        layout.setSpacing(16)
+        
+        # Title
+        title = QLabel("Certificate Information")
+        title.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        title.setStyleSheet("color: #F9FAFB; margin-bottom: 8px;")
+        layout.addWidget(title)
+        
+        # Certificate details
+        details_area = QScrollArea()
+        details_widget = QWidget()
+        details_layout = QFormLayout()
+        details_layout.setSpacing(8)
+        
+        payload = certificate.get("payload", {})
+        
+        # Format certificate information
+        cert_info = [
+            ("Certificate ID", certificate.get("certificateId", "Unknown")),
+            ("Session ID", payload.get("session_id", "Unknown")),
+            ("NIST Standard", payload.get("nist_standard", "Unknown")),
+            ("Method", payload.get("method", "Unknown")),
+            ("Device", payload.get("device", "Unknown")),
+            ("Start Time", self._format_timestamp(payload.get("start_time", ""))),
+            ("Completion Time", self._format_timestamp(payload.get("completion_time", ""))),
+            ("Operator", payload.get("operator", "Unknown")),
+            ("Hostname", payload.get("hostname", "Unknown")),
+            ("Status", payload.get("final_status", "Unknown")),
+            ("Disposition", payload.get("disposition", "Unknown"))
+        ]
+        
+        for label_text, value in cert_info:
+            label = QLabel(f"{label_text}:")
+            label.setStyleSheet("font-weight: 600; color: #9CA3AF;")
+            
+            value_label = QLabel(str(value))
+            value_label.setStyleSheet("color: #F9FAFB;")
+            value_label.setWordWrap(True)
+            value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            
+            details_layout.addRow(label, value_label)
+            
+        details_widget.setLayout(details_layout)
+        details_area.setWidget(details_widget)
+        details_area.setWidgetResizable(True)
+        
+        layout.addWidget(details_area)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        download_btn = QPushButton("Download PDF")
+        download_btn.setObjectName("primaryButton")
+        download_btn.setCursor(Qt.PointingHandCursor)
+        cert_id = certificate.get("certificateId", "")
+        download_btn.clicked.connect(lambda: self.download_certificate(cert_id))
+        
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("secondaryButton")
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.clicked.connect(dialog.close)
+        
+        button_layout.addWidget(download_btn)
+        button_layout.addWidget(close_btn)
+        layout.addLayout(button_layout)
+        
+        dialog.setLayout(layout)
+        dialog.exec()
+        
+    def download_certificate(self, certificate_id: str):
+        """Download certificate PDF with progress indication."""
+        if not certificate_id or certificate_id == "Unknown":
+            QMessageBox.warning(
+                self,
+                "Invalid Certificate",
+                "Certificate ID is not available for download."
+            )
             return
-
-        success, result = self.api_client.download_certificate(cert_id)
+            
+        self._update_status(f"Downloading certificate {certificate_id}...", "processing")
+        
+        success, result = self.api_client.download_certificate(certificate_id)
+        
         if success:
-            # Ask user where to save
-            default_name = f"certificate_{cert_id}.pdf"
-            path, _ = QFileDialog.getSaveFileName(self, "Save Certificate", default_name, "PDF Files (*.pdf)")
-            if path:
+            # Prompt user for save location
+            default_filename = f"SecureWipe_Certificate_{certificate_id}.pdf"
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Certificate",
+                default_filename,
+                "PDF Files (*.pdf);;All Files (*)"
+            )
+            
+            if file_path:
                 try:
-                    with open(path, "wb") as f:
+                    with open(file_path, "wb") as f:
                         for chunk in result.iter_content(chunk_size=8192):
                             if chunk:
                                 f.write(chunk)
-                    QMessageBox.information(self, "Download Complete", f"Certificate saved to {path}")
+                                
+                    QMessageBox.information(
+                        self,
+                        "Download Complete",
+                        f"Certificate saved successfully to:\n{file_path}"
+                    )
+                    self._update_status("Certificate downloaded successfully", "success")
+                    
                 except Exception as e:
-                    QMessageBox.critical(self, "Save Error", f"Failed to save file: {e}")
+                    QMessageBox.critical(
+                        self,
+                        "Save Error",
+                        f"Failed to save certificate file:\n{str(e)}"
+                    )
+                    self._update_status("Certificate download failed", "error")
         else:
-            QMessageBox.warning(self, "Download Failed", result)
+            QMessageBox.critical(
+                self,
+                "Download Failed", 
+                f"Failed to download certificate:\n{result}"
+            )
+            self._update_status("Certificate download failed", "error")
+            
+    def _filter_certificates(self):
+        """Filter certificates based on search input."""
+        search_text = self.certificate_search.text().strip().lower()
+        
+        if not search_text:
+            self._populate_certificates_table(self.all_certificates)
+            return
+            
+        filtered_certs = []
+        for cert in self.all_certificates:
+            # Search in certificate data
+            cert_json = json.dumps(cert).lower()
+            if search_text in cert_json:
+                filtered_certs.append(cert)
+                
+        self._populate_certificates_table(filtered_certs)
+        self._update_status(f"Filtered to {len(filtered_certs)} certificates", "info")
+        
+    def open_verification_portal(self):
+        """Open the online certificate verification portal."""
+        verification_url = "https://next-frontend-nu-two.vercel.app/verify"
+        
+        try:
+            webbrowser.open(verification_url)
+            self._update_status("Opened verification portal in browser", "success")
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Browser Error",
+                f"Failed to open verification portal:\n{str(e)}\n\n"
+                f"Please manually navigate to:\n{verification_url}"
+            )
+            
+    def verify_local_certificate(self):
+        """Handle local certificate file verification."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Certificate to Verify",
+            "",
+            "PDF Files (*.pdf);;All Files (*)"
+        )
+        
+        if file_path:
+            # For now, just show info - could be extended with actual verification logic
+            QMessageBox.information(
+                self,
+                "Local Verification",
+                f"Selected certificate file:\n{file_path}\n\n"
+                "Local verification functionality would be implemented here.\n"
+                "For now, please use the online verification portal."
+            )
+            
+    def closeEvent(self, event):
+        """Handle application close event."""
+        if self.current_wipe_process and self.current_wipe_process.isRunning():
+            reply = QMessageBox.question(
+                self,
+                "Operation in Progress",
+                "A wipe operation is currently running. Are you sure you want to exit?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.No:
+                event.ignore()
+                return
+                
+        self._update_status("Application closing", "info")
+        event.accept()
 
-    def _filter_certs(self):
-        q = self.search_input.text().strip().lower()
-        if not hasattr(self, 'all_certs'):
-            return
-        if not q:
-            self._render_certificates(self.all_certs)
-            return
-        out = []
-        for c in self.all_certs:
-            try:
-                s = json.dumps(c).lower()
-            except Exception:
-                s = str(c).lower()
-            if q in s:
-                out.append(c)
-        self._render_certificates(out)
+
+# Maintain backward compatibility with the original class name
+WipeApp = SecureWipeApp
