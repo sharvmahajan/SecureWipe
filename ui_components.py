@@ -1531,7 +1531,9 @@ class SecureWipeApp(QWidget):
             self.nav_buttons[1].setEnabled(True)  # Enable Wipe Operations
             self.nav_buttons[2].setEnabled(True)  # Enable Certificates
             self._update_status(f"Authentication successful at 07:26 PM IST, Sunday, September 28, 2025", "success")
-            
+            self.email_input.setText("")
+            self.password_input.setText("")
+
             # Navigate to wipe page
             self.switch_page(1)
             
