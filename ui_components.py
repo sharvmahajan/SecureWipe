@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SecureWipe Desktop Application - UI Components
+DELTON Desktop Application - UI Components
 Enterprise-grade user interface for secure data sanitization
 """
 import os
@@ -130,10 +130,10 @@ class Toast(QLabel):
         QTimer.singleShot(3000, self.hide)
 
 
-class SecureWipeApp(QWidget):
+class DELTONApp(QWidget):
     """
-    Enterprise-grade SecureWipe Desktop Application.
-    
+    Enterprise-grade DELTON Desktop Application.
+
     Features:
     - Professional UI/UX design
     - Comprehensive error handling
@@ -144,7 +144,6 @@ class SecureWipeApp(QWidget):
     
     def __init__(self):
         super().__init__()
-        
         # Application state
         self.api_client = APIClient("https://express-server-production-b4f4.up.railway.app")
         self.all_certificates: List[Dict[str, Any]] = []
@@ -163,7 +162,7 @@ class SecureWipeApp(QWidget):
         self.progress_timer.setInterval(50)
         
         # Apply default theme before initializing UI
-        self.apply_theme("dark")
+        self.apply_theme("light")
         
         # Initialize UI
         self._init_ui()
@@ -172,11 +171,12 @@ class SecureWipeApp(QWidget):
         # Start on login page
         self.switch_page(0)
         self._update_status("Application initialized", "info")
+        self.showMaximized()
         
     def apply_theme(self, mode: str):
         """Apply the selected theme."""
         if mode not in ["dark", "light"]:
-            mode = "dark"
+            mode = "light"
         
         self.current_theme = mode
         
@@ -680,7 +680,7 @@ class SecureWipeApp(QWidget):
         
     def _init_ui(self):
         """Initialize the user interface."""
-        self.setWindowTitle("SecureWipe Enterprise - Data Sanitization Platform")
+        self.setWindowTitle("DELTON Enterprise - Data Sanitization Platform")
         self.setMinimumSize(1200, 800)
         self.resize(1400, 900)
         
@@ -741,11 +741,11 @@ class SecureWipeApp(QWidget):
         
         title_layout = QVBoxLayout()
         title_layout.setSpacing(0)
-        
-        app_title = QLabel("SecureWipe Enterprise")
+
+        app_title = QLabel("DELTON")
         app_title.setFont(QFont("Segoe UI", 18, QFont.Bold))
-        
-        subtitle = QLabel("Professional Data Sanitization Platform")
+
+        subtitle = QLabel("Data Erasure. Logging. Trusted. Obfuscation. Nought")
         subtitle.setFont(QFont("Segoe UI", 10))
         subtitle.setProperty("subdued", True)
         
@@ -920,8 +920,8 @@ class SecureWipeApp(QWidget):
         title = QLabel("Secure Authentication")
         title.setFont(QFont("Segoe UI", 20, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
-        
-        subtitle = QLabel("Access your SecureWipe Enterprise account")
+
+        subtitle = QLabel("Access your DELTON Enterprise account")
         subtitle.setFont(QFont("Segoe UI", 12))
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setProperty("subdued", True)
@@ -1073,7 +1073,7 @@ class SecureWipeApp(QWidget):
         button_layout = QVBoxLayout()
         button_layout.setSpacing(12)
         
-        self.select_target_button = QPushButton("Select Target & Begin Wipe")
+        self.select_target_button = QPushButton("Select Target to Begin Wipe")
         self.select_target_button.setFixedHeight(50)
         self.select_target_button.setObjectName("successButton")
         self.select_target_button.setCursor(Qt.PointingHandCursor)
@@ -1185,45 +1185,37 @@ class SecureWipeApp(QWidget):
         self.certificates_table = QTableWidget()
         self.certificates_table.setObjectName("certificatesTable")
         
-        # IMPORTANT: Disable sorting while populating to prevent widget issues
         self.certificates_table.setSortingEnabled(False)
         
-        # Configure table
         headers = ["Certificate ID", "Date Created", "Method", "Status", "Actions"]
         self.certificates_table.setColumnCount(len(headers))
         self.certificates_table.setHorizontalHeaderLabels(headers)
         
-        # Configure header
         header = self.certificates_table.horizontalHeader()
-        header.setStretchLastSection(False)
+        header.setStretchLastSection(True)  # Enable stretch for the last column to fill remaining space
         
         # Set resize modes
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.Stretch)  # Actions column stretches
+        header.setSectionResizeMode(4, QHeaderView.Interactive)  # Stretch the Actions column
         
-        # Set Actions column width - INCREASED for better button visibility
-        self.certificates_table.setColumnWidth(4, 120)  # Reduced from 160 to 120 for single button
-        
-        # Configure vertical header
         v_header = self.certificates_table.verticalHeader()
         v_header.setVisible(False)
-        v_header.setDefaultSectionSize(45)  # INCREASED from 40 to 45 for better button fit
+        v_header.setDefaultSectionSize(45)
         v_header.setSectionResizeMode(QHeaderView.Fixed)
         
-        # Table styling
         self.certificates_table.setAlternatingRowColors(True)
         self.certificates_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.certificates_table.setShowGrid(False)
         
-        # CRITICAL: Set minimum row height to ensure buttons are visible
         self.certificates_table.verticalHeader().setMinimumSectionSize(45)
-        
-        # Additional table properties for better widget rendering
         self.certificates_table.setWordWrap(False)
         self.certificates_table.setAlternatingRowColors(True)
+        
+        # Set size policy to expand with the window
+        self.certificates_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
         layout.addWidget(self.certificates_table)
         page.setLayout(layout)
@@ -1336,7 +1328,7 @@ class SecureWipeApp(QWidget):
         
         theme_combo = QComboBox()
         theme_combo.addItems(["Dark Theme", "Light Theme", "System Default"])
-        theme_combo.setCurrentText("Dark Theme")
+        theme_combo.setCurrentText("Light Theme")
         theme_combo.currentTextChanged.connect(self._change_theme)
         theme_layout.addRow("Theme:", theme_combo)
         
@@ -1460,7 +1452,7 @@ class SecureWipeApp(QWidget):
         button_layout = QVBoxLayout()
         button_layout.setSpacing(12)
         
-        self.select_health_target_button = QPushButton("Select Drive & Begin Health Check")
+        self.select_health_target_button = QPushButton("Select Drive to Begin Health Check")
         self.select_health_target_button.setFixedHeight(50)
         self.select_health_target_button.setObjectName("successButton")
         self.select_health_target_button.setCursor(Qt.PointingHandCursor)
@@ -2123,19 +2115,16 @@ class SecureWipeApp(QWidget):
             
     def _populate_certificates_table(self, certificates: List[Dict[str, Any]]):
         """Populate the certificates table with data."""
-        # IMPORTANT: Disable sorting during population to prevent widget loss
         self.certificates_table.setSortingEnabled(False)
         
         self.certificates_table.setRowCount(0)
         self.certificates_table.clearContents()
         
         if not certificates:
-            # Re-enable sorting even if no data
             self.certificates_table.setSortingEnabled(True)
             return
         
         for row, cert in enumerate(certificates):
-            # Add row
             self.certificates_table.insertRow(row)
             
             payload = cert.get("payload", {})
@@ -2144,29 +2133,35 @@ class SecureWipeApp(QWidget):
             method = payload.get("method", "Unknown")
             status = payload.get("final_status", "Unknown")
             
-            # Add data items - first 4 columns
-            self.certificates_table.setItem(row, 0, QTableWidgetItem(str(cert_id)))
-            self.certificates_table.setItem(row, 1, QTableWidgetItem(formatted_date))
-            self.certificates_table.setItem(row, 2, QTableWidgetItem(method))
-            self.certificates_table.setItem(row, 3, QTableWidgetItem(status))
+            # Create items and set as read-only
+            item0 = QTableWidgetItem(str(cert_id))
+            item0.setFlags(item0.flags() & ~Qt.ItemIsEditable)  # Remove editable flag
+            self.certificates_table.setItem(row, 0, item0)
             
-            # Create SINGLE button for Actions column
+            item1 = QTableWidgetItem(formatted_date)
+            item1.setFlags(item1.flags() & ~Qt.ItemIsEditable)  # Remove editable flag
+            self.certificates_table.setItem(row, 1, item1)
+            
+            item2 = QTableWidgetItem(method)
+            item2.setFlags(item2.flags() & ~Qt.ItemIsEditable)  # Remove editable flag
+            self.certificates_table.setItem(row, 2, item2)
+            
+            item3 = QTableWidgetItem(status)
+            item3.setFlags(item3.flags() & ~Qt.ItemIsEditable)  # Remove editable flag
+            self.certificates_table.setItem(row, 3, item3)
+            
             btn = QPushButton("Actions")
-            btn.setFixedSize(250, 35)  # Set explicit size
-            btn.setObjectName("actionButton")  # For CSS styling
+            btn.setMinimumWidth(80)  # Minimum width to fit "Actions" text
+            btn.setFixedHeight(40)   # Match row height
+            btn.setObjectName("actionButton")
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(lambda checked, c=cert, cid=cert_id: self._show_actions_menu(c, cid))
             
-            # Set button in cell
             self.certificates_table.setCellWidget(row, 4, btn)
-            
-            # CRITICAL: Set explicit row height for this row
-            self.certificates_table.setRowHeight(row, 45)
+            self.certificates_table.setRowHeight(row, 57)  # Ensure row height is consistent
         
-        # Re-enable sorting after population is complete
         self.certificates_table.setSortingEnabled(True)
-        
-        # Force table refresh
+        self.certificates_table.resizeColumnsToContents()  # Adjust columns to content before stretching
         self.certificates_table.viewport().update()
         self.certificates_table.repaint()
         self.certificates_table.sortItems(1, Qt.DescendingOrder)  # Sort by Date Created descending
@@ -2307,7 +2302,7 @@ class SecureWipeApp(QWidget):
         
         if success:
             # Prompt user for save location
-            default_filename = f"SecureWipe_Certificate_{certificate_id}.pdf"
+            default_filename = f"DELTON_Certificate_{certificate_id}.pdf"
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Save Certificate",
@@ -2416,4 +2411,4 @@ class SecureWipeApp(QWidget):
 
 
 # Maintain backward compatibility with the original class name
-WipeApp = SecureWipeApp
+WipeApp = DELTONApp

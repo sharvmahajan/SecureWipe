@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SecureWipe Desktop Application
+Delton Desktop Application
 Main entry point for the application
 """
 import sys
@@ -15,10 +15,10 @@ def main():
     app = QApplication(sys.argv)
     
     # Set application properties
-    app.setApplicationName("SecureWipe")
+    app.setApplicationName("DELTON")
     app.setApplicationVersion("1.0.0")
-    app.setOrganizationName("SecureWipe Inc.")
-    
+    app.setOrganizationName("DELTON Inc.")
+
     # Create and show the main window
     window = WipeApp()
     window.show()
