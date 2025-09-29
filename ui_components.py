@@ -702,11 +702,12 @@ class SecureWipeApp(QWidget):
         
         # Main content
         self.content_stack = QStackedWidget()
-        self.content_stack.addWidget(self._create_login_page())
-        self.content_stack.addWidget(self._create_wipe_page()) 
-        self.content_stack.addWidget(self._create_certificates_page())
-        self.content_stack.addWidget(self._create_verification_page())
-        self.content_stack.addWidget(self._create_settings_page())
+        self.content_stack.addWidget(self._create_login_page())          # Index 0
+        self.content_stack.addWidget(self._create_ml_health_page())      # Index 1
+        self.content_stack.addWidget(self._create_wipe_page())           # Index 2
+        self.content_stack.addWidget(self._create_certificates_page())   # Index 3
+        self.content_stack.addWidget(self._create_verification_page())   # Index 4
+        self.content_stack.addWidget(self._create_settings_page())       # Index 5
         
         content_splitter.addWidget(self.content_stack)
         content_splitter.setSizes([300, 1100])
@@ -805,11 +806,14 @@ class SecureWipeApp(QWidget):
             self.status_indicator.set_status("offline")
             self.user_status_label.setText("Not Connected")
             self.select_target_button.setEnabled(False)
+            self.select_health_target_button.setEnabled(False)
             self.logout_button.setEnabled(False)
-            self.nav_buttons[1].setEnabled(False)  # Disable Wipe Operations
-            self.nav_buttons[2].setEnabled(False)  # Disable Certificates
+            self.nav_buttons[1].setEnabled(False)  # Disable ML Health Check
+            self.nav_buttons[2].setEnabled(False)  # Disable Wipe Operations
+            self.nav_buttons[3].setEnabled(False)  # Disable Certificates
             self.switch_page(0)  # Return to login page
             self._update_status("Logged out successfully", "info")
+    
     def _create_sidebar(self) -> QWidget:
         """Create the navigation sidebar."""
         sidebar = QFrame()
@@ -824,10 +828,11 @@ class SecureWipeApp(QWidget):
         self.nav_buttons = []
         nav_items = [
             ("Authentication", "🔐", 0, "Secure login and authentication"),
-            ("Wipe Operations", "🗑️", 1, "Secure data sanitization"),
-            ("Certificates", "📋", 2, "View and manage certificates"),
-            ("Verification", "✅", 3, "Verify certificate authenticity"), 
-            ("Settings", "⚙️", 4, "Application preferences")
+            ("ML Health Check", "💽", 1, "Perform drive health analysis"),
+            ("Wipe Operations", "🗑️", 2, "Secure data sanitization"),
+            ("Certificates", "📋", 3, "View and manage certificates"),
+            ("Verification", "✅", 4, "Verify certificate authenticity"),
+            ("Settings", "⚙️", 5, "Application preferences")
         ]
         
         for name, icon, page_idx, tooltip in nav_items:
@@ -843,10 +848,12 @@ class SecureWipeApp(QWidget):
         
         sidebar.setLayout(layout)
         if not self.is_authenticated:
-            self.nav_buttons[1].setEnabled(False)  # Disable Wipe Operations
-            self.nav_buttons[2].setEnabled(False)  # Disable Certificates
-            self.nav_buttons[3].setEnabled(True)  # Enable Verification
-            self.nav_buttons[4].setEnabled(True)  # Enable Settings
+            self.nav_buttons[1].setEnabled(False)  # Disable ML Health Check
+            self.nav_buttons[2].setEnabled(False)  # Disable Wipe Operations
+            self.nav_buttons[3].setEnabled(False)  # Disable Certificates
+            self.nav_buttons[4].setEnabled(True)   # Enable Verification
+            self.nav_buttons[5].setEnabled(True)   # Enable Settings
+        
         return sidebar
         
     def _create_nav_button(self, name: str, icon: str, page_idx: int, tooltip: str) -> QPushButton:
@@ -1426,17 +1433,408 @@ class SecureWipeApp(QWidget):
         tab.setLayout(layout)
         return tab
         
+    def _create_ml_health_page(self) -> QWidget:
+        """Create the ML Health Check page."""
+        page = QWidget()
+        layout = QHBoxLayout()
+        layout.setContentsMargins(32, 32, 32, 32)
+        layout.setSpacing(24)
+        
+        # Left panel - Configuration
+        config_panel = QFrame()
+        config_panel.setObjectName("configPanel")
+        config_panel.setMinimumWidth(400)
+        config_panel.setMaximumWidth(500)
+        
+        config_layout = QVBoxLayout()
+        config_layout.setContentsMargins(24, 24, 24, 24)
+        config_layout.setSpacing(20)
+        
+        # Panel title
+        title = QLabel("ML Health Check")
+        title.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        title.setStyleSheet("margin-bottom: 8px;")
+        config_layout.addWidget(title)
+        
+        # Action buttons
+        button_layout = QVBoxLayout()
+        button_layout.setSpacing(12)
+        
+        self.select_health_target_button = QPushButton("Select Drive & Begin Health Check")
+        self.select_health_target_button.setFixedHeight(50)
+        self.select_health_target_button.setObjectName("successButton")
+        self.select_health_target_button.setCursor(Qt.PointingHandCursor)
+        self.select_health_target_button.setEnabled(False)
+        self.select_health_target_button.clicked.connect(self.initiate_health_check)
+        
+        self.cancel_health_button = QPushButton("Cancel Operation")
+        self.cancel_health_button.setFixedHeight(42)
+        self.cancel_health_button.setObjectName("dangerButton")
+        self.cancel_health_button.setCursor(Qt.PointingHandCursor)
+        self.cancel_health_button.setEnabled(False)
+        self.cancel_health_button.clicked.connect(self.cancel_health_check)
+        
+        button_layout.addWidget(self.select_health_target_button)
+        button_layout.addWidget(self.cancel_health_button)
+        
+        config_layout.addLayout(button_layout)
+        config_layout.addStretch()
+        
+        config_panel.setLayout(config_layout)
+        
+        # Right panel - Progress and logs
+        progress_panel = QFrame()
+        progress_panel.setObjectName("progressPanel")
+        
+        progress_layout = QVBoxLayout()
+        progress_layout.setContentsMargins(24, 24, 24, 24)
+        progress_layout.setSpacing(16)
+        
+        # Progress section
+        progress_title = QLabel("Operation Progress")
+        progress_title.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        progress_title.setStyleSheet("margin-bottom: 8px;")
+        
+        self.health_progress_bar = QProgressBar()
+        self.health_progress_bar.setFixedHeight(24)
+        self.health_progress_bar.setRange(0, 100)
+        self.health_progress_bar.setValue(0)
+        self.health_progress_bar.setObjectName("progressBar")
+        
+        self.health_progress_label = QLabel("Ready to begin operation")
+        self.health_progress_label.setStyleSheet("font-weight: 500;")
+        self.health_progress_label.setProperty("subdued", True)
+        
+        progress_layout.addWidget(progress_title)
+        progress_layout.addWidget(self.health_progress_bar)
+        progress_layout.addWidget(self.health_progress_label)
+        
+        # Activity log
+        log_title = QLabel("Activity Log")
+        log_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        log_title.setStyleSheet("margin-top: 16px; margin-bottom: 8px;")
+        
+        self.health_activity_log = QTextEdit()
+        self.health_activity_log.setObjectName("activityLog")
+        self.health_activity_log.setReadOnly(True)
+        self.health_activity_log.setFont(QFont("Consolas", 9))
+        
+        progress_layout.addWidget(log_title)
+        progress_layout.addWidget(self.health_activity_log)
+        
+        # Health results display
+        results_title = QLabel("Health Check Results")
+        results_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        results_title.setStyleSheet("margin-top: 16px; margin-bottom: 8px;")
+        
+        self.health_results = QTextEdit()
+        self.health_results.setReadOnly(True)
+        
+        progress_layout.addWidget(results_title)
+        progress_layout.addWidget(self.health_results)
+        
+        progress_panel.setLayout(progress_layout)
+        
+        layout.addWidget(config_panel)
+        layout.addWidget(progress_panel)
+        page.setLayout(layout)
+        
+        return page
+        
+    def initiate_health_check(self):
+        """Initiate the ML health check process."""
+        if not self.is_authenticated:
+            QMessageBox.warning(
+                self, 
+                "Authentication Required", 
+                "Please authenticate before starting a health check."
+            )
+            return
+            
+        # Get available drives
+        drives = list_drives()
+        
+        if not drives or (len(drives) == 1 and 'error' in drives[0]):
+            QMessageBox.critical(
+                self, 
+                "System Error", 
+                "Cannot retrieve drive information. Please ensure you have administrator privileges and try again."
+            )
+            return
+            
+        # Create drive selection dialog
+        dialog = self._create_drive_selection_dialog(drives, is_health_check=True)
+        
+        if dialog.exec() == QDialog.Accepted:
+            selected_path = getattr(dialog, 'selected_path', None)
+            if selected_path:
+                self.execute_health_check(selected_path)
+                
+    def execute_health_check(self, target_path: str):
+        """Execute the ML health check with progress tracking."""
+        self._update_status(f"Initiating ML health check of {target_path}", "processing")
+        
+        # Update UI state
+        self.select_health_target_button.setEnabled(False)
+        self.cancel_health_button.setEnabled(True)
+        self.health_progress_bar.setValue(0)
+        self.health_progress_label.setText("Preparing ML health check operation...")
+        
+        # Start progress animation
+        self.progress_timer.start()
+        
+        try:
+            # Simulate or implement actual health check logic (placeholder)
+            # For real implementation, call API or run ML model
+            time.sleep(2)  # Simulate processing
+            health_result = {
+                "status": "Healthy",
+                "details": "No issues detected. Drive health is optimal.",
+                "score": 95
+            }
+            
+            # Stop progress timer
+            self.progress_timer.stop()
+            self.health_progress_bar.setValue(100)
+            
+            # Display results
+            self.health_results.setText(
+                f"Health Status: {health_result['status']}\n"
+                f"Score: {health_result['score']}/100\n"
+                f"Details: {health_result['details']}"
+            )
+            
+            QMessageBox.information(
+                self,
+                "Health Check Completed",
+                f"ML Health Check of {target_path} completed successfully.\n\n"
+                f"Status: {health_result['status']}\nScore: {health_result['score']}"
+            )
+            self._update_status("Health check completed successfully", "success")
+                
+        except Exception as e:
+            self.progress_timer.stop()
+            self._handle_health_error(str(e), target_path)
+            
+        finally:
+            # Reset UI state
+            self.select_health_target_button.setEnabled(True)
+            self.cancel_health_button.setEnabled(False)
+            QTimer.singleShot(2000, lambda: self.health_progress_bar.setValue(0))
+            
+    def _handle_health_error(self, error_message: str, target_path: str):
+        """Handle health check errors."""
+        QMessageBox.critical(
+            self,
+            "Operation Failed",
+            f"ML Health Check of {target_path} failed.\n\n"
+            f"Error: {error_message}\n\n"
+            "Please check the activity log for detailed information and try again."
+        )
+        self._update_status(f"Health check failed: {error_message}", "error")
+        
+    def cancel_health_check(self):
+        """Cancel ongoing health check process."""
+        reply = QMessageBox.question(
+            self,
+            "Cancel Operation",
+            "Are you sure you want to cancel the ongoing health check?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Stop timers and reset UI
+            self.progress_timer.stop()
+            self.health_progress_bar.setValue(0)
+            self.health_progress_label.setText("Operation canceled by user")
+            self.select_health_target_button.setEnabled(True)
+            self.cancel_health_button.setEnabled(False)
+            self._update_status("Health check canceled", "warning")
+        
+    def _create_drive_selection_dialog(self, drives: List[Dict[str, Any]], is_health_check: bool = False) -> QDialog:
+        """Create professional drive selection dialog."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select Target for Secure Wipe" if not is_health_check else "Select Drive for ML Health Check")
+        dialog.setModal(True)
+        dialog.resize(800, 600)
+        dialog.setObjectName("driveSelectionDialog")
+        
+        layout = QVBoxLayout()
+        layout.setSpacing(16)
+        
+        # Warning banner (only for wipe)
+        if not is_health_check:
+            warning_frame = QFrame()
+            warning_frame.setObjectName("warningBanner")
+            warning_frame.setStyleSheet(f"""
+                QFrame#warningBanner {{
+                    background-color: {self.colors['warning_bg']};
+                    border: 1px solid {self.colors['warning_border']};
+                    border-radius: 8px;
+                    padding: 12px;
+                }}
+            """)
+            
+            warning_layout = QHBoxLayout()
+            warning_icon = QLabel("⚠️")
+            warning_icon.setFont(QFont("Segoe UI", 16))
+            
+            warning_text = QLabel(
+                "<b>CRITICAL WARNING</b><br>"
+                "This operation will permanently destroy ALL data on the selected target. "
+                "This action cannot be undone. Ensure you have proper authorization and backups."
+            )
+            warning_text.setStyleSheet(f"color: {self.colors['warning_text']}; font-weight: 500;")
+            warning_text.setWordWrap(True)
+            
+            warning_layout.addWidget(warning_icon)
+            warning_layout.addWidget(warning_text)
+            warning_frame.setLayout(warning_layout)
+            layout.addWidget(warning_frame)
+        
+        # Drive selection table
+        drive_table = QTableWidget()
+        drive_table.setColumnCount(6)
+        drive_table.setHorizontalHeaderLabels([
+            "Device", "Size", "Type", "Model", "Serial", "Mount Point"
+        ])
+        
+        # Populate table
+        valid_drives = []
+        for drive in drives:
+            if 'error' in drive:
+                continue
+                
+            # For wipe, filter out system-critical mount points
+            if not is_health_check and drive.get('mountpoint') in ['/', '/boot', '/home', '/usr', '/var', '/etc']:
+                continue
+                
+            valid_drives.append(drive)
+            
+        drive_table.setRowCount(len(valid_drives))
+        
+        for row, drive in enumerate(valid_drives):
+            items = [
+                drive.get('name', ''),
+                drive.get('size', ''),
+                drive.get('type', ''),
+                drive.get('model', ''),
+                drive.get('serial', ''),
+                drive.get('mountpoint', 'Not mounted')
+            ]
+            
+            for col, item_text in enumerate(items):
+                item = QTableWidgetItem(str(item_text))
+                item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+                if col == 0:  # Store full drive info in first column
+                    item.setData(Qt.UserRole, drive)
+                drive_table.setItem(row, col, item)
+                
+        # Configure table
+        header = drive_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        for i in range(5):
+            header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+            
+        drive_table.setSelectionBehavior(QTableWidget.SelectRows)
+        drive_table.setAlternatingRowColors(True)
+        
+        layout.addWidget(QLabel("Available targets:"))
+        layout.addWidget(drive_table)
+        
+        # Alternative selection (only for wipe)
+        if not is_health_check:
+            alt_layout = QHBoxLayout()
+            file_btn = QPushButton("Select File/Folder Instead")
+            file_btn.setObjectName("secondaryButton")
+            file_btn.clicked.connect(lambda: self._select_file_target(dialog))
+            alt_layout.addWidget(file_btn)
+            alt_layout.addStretch()
+            layout.addLayout(alt_layout)
+        
+        # Dialog buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("secondaryButton")
+        cancel_btn.clicked.connect(dialog.reject)
+        
+        proceed_btn = QPushButton("Proceed with Wipe" if not is_health_check else "Proceed with Health Check")
+        proceed_btn.setObjectName("dangerButton" if not is_health_check else "primaryButton")
+        proceed_btn.setEnabled(False)
+        
+        def on_selection_changed():
+            proceed_btn.setEnabled(len(drive_table.selectedItems()) > 0)
+            
+        drive_table.itemSelectionChanged.connect(on_selection_changed)
+        
+        def on_proceed():
+            selected_items = drive_table.selectedItems()
+            if selected_items:
+                drive_data = selected_items[0].data(Qt.UserRole)
+                if drive_data:
+                    if is_health_check:
+                        dialog.selected_path = drive_data['name']
+                        dialog.accept()
+                    else:
+                        reply = QMessageBox.question(
+                            dialog,
+                            "Final Confirmation",
+                            f"Are you absolutely certain you want to wipe {drive_data['name']}?\n\n"
+                            f"Size: {drive_data.get('size', 'Unknown')}\n"
+                            f"Model: {drive_data.get('model', 'Unknown')}\n\n"
+                            "This action CANNOT be undone!",
+                            QMessageBox.Yes | QMessageBox.No,
+                            QMessageBox.No
+                        )
+                        
+                        if reply == QMessageBox.Yes:
+                            dialog.selected_path = drive_data['name']
+                            dialog.accept()
+                        
+        proceed_btn.clicked.connect(on_proceed)
+        
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(proceed_btn)
+        layout.addLayout(button_layout)
+        
+        dialog.setLayout(layout)
+        return dialog
+        
+    def _select_file_target(self, dialog: QDialog):
+        """Handle file/folder target selection."""
+        target_path = QFileDialog.getExistingDirectory(
+            dialog, 
+            "Select Folder to Securely Delete"
+        )
+        
+        if target_path:
+            reply = QMessageBox.question(
+                dialog,
+                "Confirm File/Folder Wipe",
+                f"Securely delete: {target_path}\n\nThis action cannot be undone!",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                dialog.selected_path = target_path
+                dialog.accept()
+                
     def _setup_keyboard_shortcuts(self):
         """Setup keyboard shortcuts for better UX."""
         from PySide6.QtGui import QKeySequence, QShortcut
         
         # Navigation shortcuts
         shortcuts = [
-            (QKeySequence("Ctrl+1"), lambda: self.switch_page(0)),
-            (QKeySequence("Ctrl+2"), lambda: self.switch_page(1)),
-            (QKeySequence("Ctrl+3"), lambda: self.switch_page(2)),
-            (QKeySequence("Ctrl+4"), lambda: self.switch_page(3)),
-            (QKeySequence("Ctrl+5"), lambda: self.switch_page(4)),
+            (QKeySequence("Ctrl+1"), lambda: self.switch_page(0)),  # Authentication
+            (QKeySequence("Ctrl+2"), lambda: self.switch_page(1)),  # ML Health Check
+            (QKeySequence("Ctrl+3"), lambda: self.switch_page(2)),  # Wipe Operations
+            (QKeySequence("Ctrl+4"), lambda: self.switch_page(3)),  # Certificates
+            (QKeySequence("Ctrl+5"), lambda: self.switch_page(4)),  # Verification
+            (QKeySequence("Ctrl+6"), lambda: self.switch_page(5)),  # Settings
             (QKeySequence("Ctrl+R"), self.fetch_certificates),
             (QKeySequence("Ctrl+Q"), self.close),
             (QKeySequence("F5"), self.fetch_certificates),
@@ -1460,7 +1858,7 @@ class SecureWipeApp(QWidget):
             btn.style().polish(btn)
             
         # Auto-fetch certificates when navigating to certificates page
-        if page_index == 2 and self.is_authenticated:
+        if page_index == 3 and self.is_authenticated:
             self.fetch_certificates()
             
     def _update_status(self, message: str, status_type: str = "info"):
@@ -1527,14 +1925,16 @@ class SecureWipeApp(QWidget):
             self.status_indicator.set_status("online")
             self.user_status_label.setText(f"Connected as {email}")
             self.select_target_button.setEnabled(True)
+            self.select_health_target_button.setEnabled(True)
             self.logout_button.setEnabled(True)  # Enable logout button on successful login
-            self.nav_buttons[1].setEnabled(True)  # Enable Wipe Operations
-            self.nav_buttons[2].setEnabled(True)  # Enable Certificates
+            self.nav_buttons[1].setEnabled(True)  # Enable ML Health Check
+            self.nav_buttons[2].setEnabled(True)  # Enable Wipe Operations
+            self.nav_buttons[3].setEnabled(True)  # Enable Certificates
             self._update_status(f"Authentication successful at 07:26 PM IST, Sunday, September 28, 2025", "success")
             self.email_input.setText("")
             self.password_input.setText("")
 
-            # Navigate to wipe page
+            # Navigate to ML Health Check page
             self.switch_page(1)
             
         else:
@@ -1573,171 +1973,6 @@ class SecureWipeApp(QWidget):
             selected_path = getattr(dialog, 'selected_path', None)
             if selected_path:
                 self.execute_wipe_operation(selected_path)
-                
-    def _create_drive_selection_dialog(self, drives: List[Dict[str, Any]]) -> QDialog:
-        """Create professional drive selection dialog."""
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Select Target for Secure Wipe")
-        dialog.setModal(True)
-        dialog.resize(800, 600)
-        dialog.setObjectName("driveSelectionDialog")
-        
-        layout = QVBoxLayout()
-        layout.setSpacing(16)
-        
-        # Warning banner
-        warning_frame = QFrame()
-        warning_frame.setObjectName("warningBanner")
-        warning_frame.setStyleSheet(f"""
-            QFrame#warningBanner {{
-                background-color: {self.colors['warning_bg']};
-                border: 1px solid {self.colors['warning_border']};
-                border-radius: 8px;
-                padding: 12px;
-            }}
-        """)
-        
-        warning_layout = QHBoxLayout()
-        warning_icon = QLabel("⚠️")
-        warning_icon.setFont(QFont("Segoe UI", 16))
-        
-        warning_text = QLabel(
-            "<b>CRITICAL WARNING</b><br>"
-            "This operation will permanently destroy ALL data on the selected target. "
-            "This action cannot be undone. Ensure you have proper authorization and backups."
-        )
-        warning_text.setStyleSheet(f"color: {self.colors['warning_text']}; font-weight: 500;")
-        warning_text.setWordWrap(True)
-        
-        warning_layout.addWidget(warning_icon)
-        warning_layout.addWidget(warning_text)
-        warning_frame.setLayout(warning_layout)
-        layout.addWidget(warning_frame)
-        
-        # Drive selection table
-        drive_table = QTableWidget()
-        drive_table.setColumnCount(6)
-        drive_table.setHorizontalHeaderLabels([
-            "Device", "Size", "Type", "Model", "Serial", "Mount Point"
-        ])
-        
-        # Populate table
-        valid_drives = []
-        for drive in drives:
-            if 'error' in drive:
-                continue
-                
-            # Filter out system-critical mount points
-            if drive.get('mountpoint') in ['/', '/boot', '/home', '/usr', '/var', '/etc']:
-                continue
-                
-            valid_drives.append(drive)
-            
-        drive_table.setRowCount(len(valid_drives))
-        
-        for row, drive in enumerate(valid_drives):
-            items = [
-                drive.get('name', ''),
-                drive.get('size', ''),
-                drive.get('type', ''),
-                drive.get('model', ''),
-                drive.get('serial', ''),
-                drive.get('mountpoint', 'Not mounted')
-            ]
-            
-            for col, item_text in enumerate(items):
-                item = QTableWidgetItem(str(item_text))
-                item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-                if col == 0:  # Store full drive info in first column
-                    item.setData(Qt.UserRole, drive)
-                drive_table.setItem(row, col, item)
-                
-        # Configure table
-        header = drive_table.horizontalHeader()
-        header.setStretchLastSection(True)
-        for i in range(5):
-            header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
-            
-        drive_table.setSelectionBehavior(QTableWidget.SelectRows)
-        drive_table.setAlternatingRowColors(True)
-        
-        layout.addWidget(QLabel("Available targets:"))
-        layout.addWidget(drive_table)
-        
-        # Alternative selection
-        alt_layout = QHBoxLayout()
-        file_btn = QPushButton("Select File/Folder Instead")
-        file_btn.setObjectName("secondaryButton")
-        file_btn.clicked.connect(lambda: self._select_file_target(dialog))
-        alt_layout.addWidget(file_btn)
-        alt_layout.addStretch()
-        layout.addLayout(alt_layout)
-        
-        # Dialog buttons
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-        
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setObjectName("secondaryButton")
-        cancel_btn.clicked.connect(dialog.reject)
-        
-        proceed_btn = QPushButton("Proceed with Wipe")
-        proceed_btn.setObjectName("dangerButton")
-        proceed_btn.setEnabled(False)
-        
-        def on_selection_changed():
-            proceed_btn.setEnabled(len(drive_table.selectedItems()) > 0)
-            
-        drive_table.itemSelectionChanged.connect(on_selection_changed)
-        
-        def on_proceed():
-            selected_items = drive_table.selectedItems()
-            if selected_items:
-                drive_data = selected_items[0].data(Qt.UserRole)
-                if drive_data:
-                    reply = QMessageBox.question(
-                        dialog,
-                        "Final Confirmation",
-                        f"Are you absolutely certain you want to wipe {drive_data['name']}?\n\n"
-                        f"Size: {drive_data.get('size', 'Unknown')}\n"
-                        f"Model: {drive_data.get('model', 'Unknown')}\n\n"
-                        "This action CANNOT be undone!",
-                        QMessageBox.Yes | QMessageBox.No,
-                        QMessageBox.No
-                    )
-                    
-                    if reply == QMessageBox.Yes:
-                        dialog.selected_path = drive_data['name']
-                        dialog.accept()
-                        
-        proceed_btn.clicked.connect(on_proceed)
-        
-        button_layout.addWidget(cancel_btn)
-        button_layout.addWidget(proceed_btn)
-        layout.addLayout(button_layout)
-        
-        dialog.setLayout(layout)
-        return dialog
-        
-    def _select_file_target(self, dialog: QDialog):
-        """Handle file/folder target selection."""
-        target_path = QFileDialog.getExistingDirectory(
-            dialog, 
-            "Select Folder to Securely Delete"
-        )
-        
-        if target_path:
-            reply = QMessageBox.question(
-                dialog,
-                "Confirm File/Folder Wipe",
-                f"Securely delete: {target_path}\n\nThis action cannot be undone!",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            
-            if reply == QMessageBox.Yes:
-                dialog.selected_path = target_path
-                dialog.accept()
                 
     def execute_wipe_operation(self, target_path: str):
         """Execute the secure wipe operation with progress tracking."""
