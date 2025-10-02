@@ -60,6 +60,10 @@ You can package the application as a standalone executable using [PyInstaller](h
 
 3. The executable will be available in the `dist` folder.
 
+## WebApp
+
+- **Website Frontend:** [https://github.com/bzubs/next-frontend](https://github.com/bzubs/next-frontend)
+- **Website Backend:** [https://github.com/bzubs/express-server](https://github.com/bzubs/express-server)
 ---
 ## License
 
